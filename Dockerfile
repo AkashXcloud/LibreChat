@@ -6,6 +6,8 @@ FROM node:24.16.0-alpine AS node
 RUN apk upgrade --no-cache
 RUN apk add --no-cache jemalloc
 RUN apk add --no-cache python3 py3-pip uv
+# Playwright/Chromium dependencies for headless browser
+RUN apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont
 
 # Set environment variable to use jemalloc
 ENV LD_PRELOAD=/usr/lib/libjemalloc.so.2
@@ -13,7 +15,8 @@ ENV LD_PRELOAD=/usr/lib/libjemalloc.so.2
 ENV SCARF_ANALYTICS=false
 
 # Add `uv` for extended MCP support
-COPY --from=ghcr.io/astral-sh/uv:0.9.5-python3.12-alpine /usr/local/bin/uv /usr/local/bin/uvx /bin/
+# COPY --from=ghcr.io/astral-sh/uv:0.9.5-python3.12-alpine /usr/local/bin/uv /usr/local/bin/uvx /bin/
+COPY --from=docker.io/astral/uv:0.9.5 /uv /uvx /bin/
 RUN uv --version
 
 # Set configurable max-old-space-size with default
