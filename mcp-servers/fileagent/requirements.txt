@@ -1,0 +1,6 @@
+mcp>=1.30,<2
+python-pptx
+cairosvg
+python-docx
+openpyxl
+reportlab

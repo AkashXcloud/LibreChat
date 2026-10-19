@@ -1,0 +1,33 @@
+services:
+  fileagent:
+    container_name: fileagent
+    build: ./mcp-servers/fileagent
+    restart: always
+    environment:
+      # This URL must be reachable from the user's browser.
+      FILEAGENT_PUBLIC_URL: ${FILEAGENT_PUBLIC_URL:-http://localhost:3080}
+      MCP_PORT: 8002
+      DOWNLOAD_PORT: 8001
+    ports:
+      - "8001:8001"
+      - "8002:8002"
+    volumes:
+      - ./mcp-servers/fileagent/output:/tmp/fileagent
+    networks:
+      - librechat_default
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; socket.create_connection(('127.0.0.1', 8002), 2).close()"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+networks:
+  librechat_default:
+    external: true
+    name: librechat_default
+
