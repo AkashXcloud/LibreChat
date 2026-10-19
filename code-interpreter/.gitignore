@@ -1,0 +1,23 @@
+data/
+node_modules
+packages/*/dist/
+.env
+.git
+.npmrc
+/logs/**/*
+/file-server-logs/**/*
+/service-logs/**/*
+/tool-call-server-logs/**/*
+/.build-lambda-microvm/
+
+# Helm artifacts
+helm/*/charts/*.tgz
+helm/*/Chart.lock
+/dist/
+
+# Local sandbox runtime data (docker volume mount)
+data/
+
+
+# Editor config
+.vscode/

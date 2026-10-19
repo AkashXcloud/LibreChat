@@ -1,0 +1,34 @@
+# Base stage for shared steps
+FROM node:22-slim AS base
+WORKDIR /app
+COPY service/package*.json ./
+RUN npm ci
+
+# Build stage
+FROM base AS builder
+COPY service/src ./src
+COPY shared /shared
+COPY packages/code/src /packages/code/src
+COPY service/tsconfig.json ./
+RUN npx tsc -p tsconfig.json
+
+# Production stage
+FROM node:22-slim AS production
+ENV NODE_ENV=production
+WORKDIR /app
+COPY service/package*.json ./
+RUN npm ci --only=production
+COPY --from=builder /app/.build ./.build
+EXPOSE 3000
+CMD ["node", ".build/file-server.js"]
+
+# Development stage
+FROM base AS development
+ENV NODE_ENV=development
+COPY service/src ./src
+COPY shared /shared
+COPY packages/code/src /packages/code/src
+COPY service/tsconfig.json ./
+RUN npm install -g ts-node typescript
+EXPOSE 3000 9230
+CMD ["npm", "run", "debug:minio"]

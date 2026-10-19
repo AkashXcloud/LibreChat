@@ -1,0 +1,569 @@
+openapi: '3.0.0'
+info:
+  title: LibreChat Code Interpreter API
+  version: '1.0.0'
+  description: >-
+    API for sandbox code execution and file management. Trusted callers should
+    assert the intended deployment with X-CodeAPI-Expected-Profile on every
+    request; responses advertise the actual profile.
+servers:
+  - url: https://api.librechat.ai/v1
+    description: LibreChat API server
+
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    ExpectedExecutionProfile:
+      name: X-CodeAPI-Expected-Profile
+      in: header
+      required: false
+      description: >-
+        Trusted routing assertion. A mismatched endpoint returns HTTP 409
+        before any work is enqueued. Optional only for backwards compatibility.
+      schema:
+        type: string
+        enum: [default, stateful]
+
+  headers:
+    ExecutionProfile:
+      description: Execution profile served by this deployment.
+      schema:
+        type: string
+        enum: [default, stateful]
+
+  responses:
+    BadRequest:
+      description: Invalid request or invalid expected execution profile
+      headers:
+        X-CodeAPI-Execution-Profile:
+          $ref: '#/components/headers/ExecutionProfile'
+      content:
+        application/json:
+          schema:
+            anyOf:
+              - $ref: '#/components/schemas/Error'
+              - $ref: '#/components/schemas/ExecutionProfileError'
+    Conflict:
+      description: Request conflict or execution-profile mismatch
+      headers:
+        X-CodeAPI-Execution-Profile:
+          $ref: '#/components/headers/ExecutionProfile'
+      content:
+        application/json:
+          schema:
+            anyOf:
+              - $ref: '#/components/schemas/Error'
+              - $ref: '#/components/schemas/ExecutionProfileError'
+
+  schemas:
+    FileRef:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        path:
+          type: string
+
+    RequestFile:
+      type: object
+      properties:
+        id:
+          type: string
+        session_id:
+          type: string
+        name:
+          type: string
+      required:
+        - id
+        - session_id
+        - name
+
+    ExecuteResponse:
+      type: object
+      properties:
+        run:
+          type: object
+          properties:
+            stdout:
+              type: string
+            stderr:
+              type: string
+            code:
+              type: integer
+              nullable: true
+            signal:
+              type: string
+              nullable: true
+            output:
+              type: string
+            memory:
+              type: integer
+              nullable: true
+            message:
+              type: string
+              nullable: true
+            status:
+              type: string
+              nullable: true
+            cpu_time:
+              type: number
+              nullable: true
+            wall_time:
+              type: number
+              nullable: true
+        language:
+          type: string
+        version:
+          type: string
+        session_id:
+          type: string
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileRef'
+
+    RequestBody:
+      type: object
+      required:
+        - code
+        - lang
+      properties:
+        timeout:
+          type: number
+          nullable: true
+          minimum: 0
+          exclusiveMinimum: true
+          description: >-
+            Optional runtime cap in milliseconds. Positive finite values are
+            rounded up to whole milliseconds and clamped to JOB_TIMEOUT, then
+            to the sandbox's effective language runtime limit. Omitted or null
+            values preserve the worker's runtime default. This caps execution,
+            not queueing or request transport time.
+        code:
+          type: string
+        lang:
+          type: string
+        args:
+          type: array
+          items:
+            type: string
+        user_id:
+          type: string
+        entity_id:
+          type: string
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/RequestFile'
+        runtime_session_hint:
+          type: string
+          maxLength: 128
+          pattern: '^[A-Za-z0-9._:-]+$'
+          description: >-
+            Stable opaque hint for stateful runtime reuse. The server binds it
+            to the authenticated tenant and user. Required in strict runtime
+            session mode and ignored by the default stateless profile.
+
+    FileObject:
+      type: object
+      properties:
+        name:
+          type: string
+        id:
+          type: string
+        session_id:
+          type: string
+        content:
+          type: string
+        size:
+          type: number
+        lastModified:
+          type: string
+        etag:
+          type: string
+        metadata:
+          type: object
+          properties:
+            content-type:
+              type: string
+            original-filename:
+              type: string
+        contentType:
+          type: string
+
+    UploadResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        session_id:
+          type: string
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileObject'
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        details:
+          type: string
+        message:
+          type: string
+
+    ExecutionProfileError:
+      type: object
+      required: [error, message, actual_profile]
+      properties:
+        error:
+          type: string
+          enum: [invalid_execution_profile, execution_profile_mismatch]
+        message:
+          type: string
+        expected_profile:
+          type: string
+        actual_profile:
+          type: string
+          enum: [default, stateful]
+
+    HostedAppStartRequest:
+      type: object
+      required:
+        - runtime_session_hint
+        - app_id
+        - revision
+        - language
+        - version
+        - entrypoint
+      properties:
+        runtime_session_hint:
+          type: string
+          maxLength: 128
+          pattern: '^[A-Za-z0-9._:-]+$'
+        adapter:
+          type: string
+          enum: [resident]
+          default: resident
+        app_id:
+          type: string
+          maxLength: 64
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+        revision:
+          type: string
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+        language:
+          type: string
+        version:
+          type: string
+        entrypoint:
+          type: string
+          description: Canonical path relative to the restored stateful workspace.
+        cwd:
+          type: string
+          default: .
+        args:
+          type: array
+          maxItems: 64
+          items:
+            type: string
+        env:
+          type: object
+          additionalProperties:
+            type: string
+
+    HostedAppStatus:
+      type: object
+      required: [app_id, revision, state, preview_id, updated_at]
+      properties:
+        app_id:
+          type: string
+        revision:
+          type: string
+        state:
+          type: string
+          enum: [starting, running, stopping, stopped, failed]
+        preview_id:
+          type: string
+          description: Opaque hosted-app lease identity.
+        preview_url:
+          type: string
+          format: uri
+          description: Five-minute owner capability exchange URL on the isolated app origin.
+        hard_deadline_at:
+          type: integer
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
+        error:
+          type: string
+
+paths:
+  /hosted-apps:
+    post:
+      summary: Start or reassert a resident hosted app
+      description: >-
+        Stateful-profile only. Captures an exact workspace checkpoint and runs
+        the immutable revision in a dedicated Lambda MicroVM app-host image.
+      operationId: startHostedApp
+      parameters:
+        - $ref: '#/components/parameters/ExpectedExecutionProfile'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedAppStartRequest'
+      responses:
+        '200':
+          description: Hosted app is running
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedAppStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          description: Hosted app start rate limit exceeded
+        '503':
+          description: Lifecycle or provider operation unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /hosted-apps/{app_id}:
+    parameters:
+      - $ref: '#/components/parameters/ExpectedExecutionProfile'
+      - name: app_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: runtime_session_hint
+        in: query
+        required: true
+        schema:
+          type: string
+          maxLength: 128
+          pattern: '^[A-Za-z0-9._:-]+$'
+    get:
+      summary: Get hosted app status and a fresh preview URL
+      operationId: getHostedApp
+      responses:
+        '200':
+          description: Hosted app status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedAppStatus'
+        '404':
+          description: Hosted app not found
+    delete:
+      summary: Terminate a hosted app lease
+      operationId: stopHostedApp
+      responses:
+        '200':
+          description: Hosted app stopped
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedAppStatus'
+        '404':
+          description: Hosted app not found
+
+  /exec:
+    post:
+      summary: Execute code
+      description: Execute code with specified language and parameters
+      operationId: executeCode
+      parameters:
+        - $ref: '#/components/parameters/ExpectedExecutionProfile'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestBody'
+      responses:
+        '200':
+          description: Successful execution
+          headers:
+            X-CodeAPI-Execution-Profile:
+              $ref: '#/components/headers/ExecutionProfile'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecuteResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /download/{session_id}/{fileId}:
+    get:
+      summary: Download a file
+      parameters:
+        - $ref: '#/components/parameters/ExpectedExecutionProfile'
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: fileId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: File content
+          headers:
+            X-CodeAPI-Execution-Profile:
+              $ref: '#/components/headers/ExecutionProfile'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: File not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /upload:
+    post:
+      summary: Upload files
+      parameters:
+        - $ref: '#/components/parameters/ExpectedExecutionProfile'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                entity_id:
+                  type: string
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        '200':
+          description: Successful upload
+          headers:
+            X-CodeAPI-Execution-Profile:
+              $ref: '#/components/headers/ExecutionProfile'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadResponse'
+        '413':
+          description: File size limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /files/{session_id}:
+    get:
+      summary: Get files information
+      parameters:
+        - $ref: '#/components/parameters/ExpectedExecutionProfile'
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: detail
+          in: query
+          schema:
+            type: string
+            default: simple
+      responses:
+        '200':
+          description: Files information
+          headers:
+            X-CodeAPI-Execution-Profile:
+              $ref: '#/components/headers/ExecutionProfile'
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FileObject'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /files/{session_id}/{fileId}:
+    delete:
+      summary: Delete a file
+      parameters:
+        - $ref: '#/components/parameters/ExpectedExecutionProfile'
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: fileId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: File deleted successfully
+          headers:
+            X-CodeAPI-Execution-Profile:
+              $ref: '#/components/headers/ExecutionProfile'
+        '500':
+          description: Error deleting file
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'

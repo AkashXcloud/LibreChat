@@ -1,0 +1,288 @@
+# Standalone CI for the public LibreChat-AI/code-interpreter repo, which is
+# published from services/codeapi as snapshot commits (see
+# .github/workflows/publish-codeapi.yml in the monorepo). This file is
+# inert inside the monorepo — GitHub only runs workflows from the repo
+# root — and becomes the root workflow in the published repo. Keep it in
+# sync with ci-codeapi.yml.
+name: CI
+
+on:
+  push:
+    # sync/** is included because the sync PR is opened by the GitHub Actions
+    # bot, whose events don't trigger pull_request workflows — the push-event
+    # runs on the branch satisfy the PR's checks instead.
+    branches: [main, 'sync/**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  deployment-config-tests:
+    name: Deployment Config Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Block-root package delivery
+        run: tests/block_root_package_delivery.sh
+
+      - name: KVM guest resolver handoff
+        run: tests/kvm_guest_dns.sh
+
+      - name: Sandbox-runner liveness checks
+        run: tests/sandbox_runner_healthcheck.sh
+
+      - name: Bridge pairing rollout safety
+        run: tests/bridge_pairing_rollout.sh
+
+      - name: Compose bridge configuration
+        run: node tests/compose-bridge-config.cjs
+
+      - name: Validate sandbox Dockerfiles
+        run: |
+          docker buildx build --check -f api/Dockerfile .
+          docker buildx build --check -f docker/Dockerfile.worker-sandbox .
+
+  launcher-unit-tests:
+    name: Launcher Unit Tests
+    runs-on: ubuntu-latest
+    container: fedora:43
+    defaults:
+      run:
+        working-directory: launcher
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Install Rust and libkrun
+        # Mirrors launcher/Dockerfile's builder stage; libkrun is only packaged
+        # for Fedora, and the guest-environment checks link against it.
+        run: dnf install -y --setopt=install_weak_deps=False rust cargo libkrun-devel gcc
+
+      - name: Cargo tests
+        run: cargo test
+
+  api-unit-tests:
+    name: API Unit Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Cache Bun packages
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-codeapi-api-bun-1.3.14-${{ hashFiles('api/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-codeapi-api-bun-1.3.14-
+
+      - name: Install dependencies
+        run: bun ci
+
+      - name: Build API
+        run: bun run build
+
+      - name: Compile + smoke spec-guard
+        # spec-guard.c is otherwise only compiled by api/Dockerfile, which
+        # the helm workflow builds post-merge. Catching syntax errors and
+        # exec-semantic regressions pre-merge prevents broken sandbox
+        # binaries from reaching the image build.
+        working-directory: api/src
+        run: |
+          gcc -O2 -static -Wall -Wextra -Werror -o /tmp/spec-guard spec-guard.c
+          # Smoke: spec-guard must execvp its argument cleanly. Use a
+          # parent process with a known FD population so we also assert
+          # the close-inherited-FDs path runs (child must see only the
+          # FDs `ls` itself opens).
+          PARENT_FDS=$(bash -c 'exec 10<&0 11<&0 12<&0 13<&0 14<&0; ls /proc/self/fd | wc -l')
+          CHILD_FDS=$(bash -c 'exec 10<&0 11<&0 12<&0 13<&0 14<&0; /tmp/spec-guard /bin/ls /proc/self/fd | wc -l')
+          echo "parent fds (with 5 extra inherited): $PARENT_FDS"
+          echo "child fds via spec-guard:           $CHILD_FDS"
+          test "$PARENT_FDS" -ge 8 || { echo "FAIL: parent did not actually inherit extra FDs"; exit 1; }
+          test "$CHILD_FDS" -le 5 || { echo "FAIL: spec-guard did not close inherited FDs (child saw $CHILD_FDS)"; exit 1; }
+
+      - name: Bun tests
+        run: bun run test
+
+  service-unit-tests:
+    name: Service Unit Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: service
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Cache Bun packages
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-codeapi-service-bun-1.3.14-${{ hashFiles('service/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-codeapi-service-bun-1.3.14-
+
+      - name: Install dependencies
+        run: bun ci
+
+      - name: Build service
+        run: bun run build
+
+      - name: Bun tests
+        run: bun run test
+
+  code-package-tests:
+    name: Code Package Tests (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['20.11.0', '22.21.0', '24.16.0']
+    defaults:
+      run:
+        working-directory: packages/code
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: packages/code/package-lock.json
+
+      - name: Install ripgrep
+        # list_files and search_text shell out to rg. Without it the workspace
+        # tools degrade to LIST_UNAVAILABLE / SEARCH_UNAVAILABLE and 37 tests
+        # fail, so the dependency is part of the job, not an assumption.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ripgrep
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Tests
+        run: npm test
+
+  macos-storage-tests:
+    name: macOS Storage ACL Tests
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: packages/code
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.16.0
+      - run: npm ci
+      - run: npm run build
+      - name: Native ACL and credential lifecycle tests
+        run: node --test dist/macos-storage.test.js dist/private-storage.test.js dist/storage.test.js dist/github.test.js
+
+  lambda-microvm-provisioning:
+    name: Lambda MicroVM Provisioning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install service dependencies
+        working-directory: service
+        run: bun ci
+
+      - name: Type-check MicroVM image helper
+        working-directory: service
+        run: >-
+          bunx tsc --noEmit
+          --moduleResolution node16
+          --module node16
+          --target es2022
+          --strict
+          --esModuleInterop
+          --skipLibCheck
+          --types node,bun-types
+          scripts/create-microvm-image.ts
+
+      - name: Test MicroVM image helper state machine
+        working-directory: service
+        run: bun test scripts/create-microvm-image.test.ts
+
+      - name: Validate artifact build script
+        run: |
+          bash -n scripts/build-lambda-microvm-artifact.sh
+          shellcheck scripts/build-lambda-microvm-artifact.sh
+
+      - name: Validate runner Dockerfile
+        run: |
+          docker buildx build --check \
+            --platform linux/arm64 \
+            --target lambda-microvm-runner \
+            -f api/Dockerfile \
+            .
+          docker buildx build --check \
+            --platform linux/arm64 \
+            --target lambda-microvm-app-host \
+            -f api/Dockerfile \
+            .
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.15.2
+          terraform_wrapper: false
+
+      - name: Validate Terraform
+        working-directory: docs/lambda-microvm/terraform
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false -input=false -lockfile=readonly
+          terraform validate
+          terraform test
+
+  lambda-microvm-runner-build:
+    name: Lambda MicroVM Runner Image (arm64)
+    needs: lambda-microvm-provisioning
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Create native BuildKit builder
+        run: |
+          test "$(uname -m)" = "aarch64"
+          docker buildx create \
+            --name lambda-microvm-ci \
+            --driver docker-container \
+            --use
+          docker buildx inspect --bootstrap
+
+      - name: Build Lambda MicroVM runner image
+        # The target pins Bun 1.3.14 and installs api/bun.lock frozen. Building
+        # natively catches architecture-specific package and Docker layer
+        # failures without retaining a second multi-gigabyte image copy.
+        run: |
+          docker buildx build \
+            --builder lambda-microvm-ci \
+            --platform linux/arm64 \
+            --target lambda-microvm-runner \
+            --output type=cacheonly \
+            --progress plain \
+            -f api/Dockerfile \
+            .

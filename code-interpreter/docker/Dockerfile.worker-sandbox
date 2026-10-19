@@ -1,0 +1,293 @@
+# Combined Worker-Sandbox Dockerfile (MicroVM)
+# Boots the sandbox server inside a libkrun microVM with its own kernel,
+# alongside the worker process managed by supervisor.sh.
+# Only requires /dev/kvm on the host — no privileged mode, no capabilities.
+#
+# Architecture within this container:
+# ┌──────────────────────────────────────────────────────────────────────────┐
+# │  Worker-Sandbox Container (Fedora 43, libkrun)                          │
+# │                                                                         │
+# │  ┌─────────────────┐        ┌──────────────────────────────────────────┐│
+# │  │  Worker Process │ ──────▶│  libkrun MicroVM (own kernel)            ││
+# │  │  (job processor)│ :2000  │  └─ NsJail Sandbox (code execution)     ││
+# │  │  Port 3113      │        │                                          ││
+# │  │  (health)       │        │                                          ││
+# │  └─────────────────┘        └──────────────────────────────────────────┘│
+# └──────────────────────────────────────────────────────────────────────────┘
+#
+# Scale this as a unit - PYTHON_CONCURRENCY = sandbox capacity
+
+# ============================================================================
+# Stage 1: Build NsJail from source
+# ============================================================================
+FROM buildpack-deps:bookworm AS nsjail-builder
+
+WORKDIR /nsjail
+
+COPY docker/apt-install.sh /usr/local/bin/apt-install
+RUN chmod +x /usr/local/bin/apt-install
+
+RUN apt-install \
+    bison \
+    flex \
+    libprotobuf-dev \
+    libnl-route-3-dev \
+    protobuf-compiler \
+    pkg-config
+
+RUN git clone -b master --single-branch https://github.com/google/nsjail.git . \
+    && git checkout 66ad78dc361721512fbf9470488e584364c75489 \
+    && git submodule update --init --recursive
+
+RUN make -j$(nproc)
+
+COPY api/src/spec-guard.c /tmp/spec-guard.c
+COPY docker/rootfs-setup.c /tmp/rootfs-setup.c
+RUN gcc -O2 -static -o /usr/local/bin/spec-guard /tmp/spec-guard.c \
+    && gcc -O2 -static -o /usr/local/bin/sandbox-rootfs-setup /tmp/rootfs-setup.c \
+    && chmod 0111 /usr/local/bin/spec-guard /usr/local/bin/sandbox-rootfs-setup
+
+# ============================================================================
+# Stage 1b: Build language runtime packages for the baked KVM root disk
+#
+# Mirrors docker/Dockerfile.package-init, but populates /pkgs at image-build
+# time so the combined worker can boot without a long-lived /host-packages
+# virtio-fs mount.
+# ============================================================================
+FROM buildpack-deps:bookworm AS package-builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHON_VERSION=3.14.4
+ENV BUN_VERSION=1.3.14
+
+COPY docker/apt-install.sh /usr/local/bin/apt-install
+RUN chmod +x /usr/local/bin/apt-install
+
+RUN apt-install \
+    curl unzip wget ca-certificates \
+    build-essential libssl-dev libffi-dev libsqlite3-dev \
+    zlib1g-dev libbz2-dev libreadline-dev libncurses5-dev \
+    tk-dev xz-utils libcurl4-openssl-dev libfontconfig1-dev \
+    libudunits2-dev libpng-dev libxml2-dev libcairo2-dev \
+    libfreetype6-dev
+
+RUN mkdir -p /pkgs
+
+COPY docker/package-init.sh /package-init.sh
+COPY javascript-packages.txt /javascript-packages.txt
+RUN chmod +x /package-init.sh && FORCE_REBUILD=true /package-init.sh
+
+# ============================================================================
+# Stage 2: Build worker
+# ============================================================================
+FROM oven/bun:1.3.14 AS worker-builder
+WORKDIR /app
+COPY service/package.json service/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY service/src ./src
+COPY packages/code/src /packages/code/src
+COPY shared /shared
+COPY service/tsconfig.json ./
+RUN bun build ./src/worker-server.ts --minify --outdir .build --target bun --external '@opentelemetry/*'
+
+# ============================================================================
+# Stage 3: Build sandbox API
+# ============================================================================
+FROM oven/bun:1.3.14 AS sandbox-builder
+WORKDIR /app
+COPY api/package.json ./
+RUN bun install --frozen-lockfile
+COPY api/src ./src
+COPY shared /shared
+COPY api/tsconfig.json ./
+RUN bun build ./src/index.ts --minify --outdir .build --target bun --external '@opentelemetry/*'
+
+# ============================================================================
+# Stage 4: Build sandbox rootfs (full OS layer for the microVM guest)
+# ============================================================================
+FROM oven/bun:1.3.14-debian AS sandbox-rootfs
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+COPY docker/apt-install.sh /usr/local/bin/apt-install
+RUN chmod +x /usr/local/bin/apt-install
+
+RUN apt-install \
+    coreutils \
+    util-linux \
+    bsdextrautils \
+    locales \
+    procps \
+    iptables \
+    bc \
+    jq \
+    poppler-utils \
+    fonts-dejavu \
+    fonts-liberation \
+    libnl-route-3-200 \
+    libprotobuf32 \
+    libffi8 \
+    ca-certificates \
+    && libffi=$(find /usr/lib -name 'libffi.so.8' -print -quit) \
+    && { [ -n "$libffi" ] || { echo "libffi.so.8 not found" >&2; exit 1; }; } \
+    && ln -sf "$libffi" "${libffi%.so.8}.so.6"
+
+# Restore the standard Debian `awk` -> `mawk` symlink. See api/Dockerfile
+# for the full rationale; in short, mawk's binary ships in slim base
+# images (Priority: required) but its postinst's update-alternatives
+# step is skipped, so bare `awk` doesn't resolve. Identical security
+# surface to sed/tr/coreutils.
+RUN [ -x /usr/bin/mawk ] && ln -sf /usr/bin/mawk /usr/bin/awk
+
+RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen
+
+COPY --from=nsjail-builder /nsjail/nsjail /usr/sbin/nsjail
+COPY --from=nsjail-builder /usr/local/bin/spec-guard /usr/local/bin/spec-guard
+RUN chmod +x /usr/sbin/nsjail
+
+WORKDIR /sandbox_api
+
+COPY api/package.json ./
+RUN bun install --frozen-lockfile --production
+COPY --from=sandbox-builder /app/.build ./.build
+COPY api/config ./config
+COPY api/src/entrypoint.sh ./entrypoint.sh
+COPY api/src/guest-dns.sh ./guest-dns.sh
+RUN chmod +x ./entrypoint.sh
+
+RUN mkdir -p /pkgs /tmp/sandbox
+
+RUN find / -xdev -perm /6000 -exec chmod ug-s {} + 2>/dev/null || true
+RUN rm -f /usr/bin/nsenter /usr/bin/unshare /usr/bin/chroot /usr/sbin/chroot \
+         /usr/bin/perl* /usr/bin/apt /usr/bin/apt-get /usr/bin/dpkg \
+         /usr/local/bin/apt-install \
+         /usr/sbin/adduser /usr/sbin/useradd /usr/sbin/usermod \
+         /usr/sbin/groupadd /usr/sbin/groupmod \
+         /usr/bin/su \
+         /usr/bin/chfn /usr/bin/chsh /usr/bin/gpasswd /usr/bin/newgrp \
+         /usr/bin/passwd /usr/bin/sg \
+         /usr/bin/chage /usr/bin/expiry /usr/sbin/unix_chkpwd \
+    2>/dev/null || true
+
+# ============================================================================
+# Stage 5: Build the Rust launcher binary (Fedora for libkrun ABI)
+# ============================================================================
+FROM fedora:43 AS launcher-builder
+
+RUN dnf install -y \
+    rust cargo \
+    libkrun-devel \
+    gcc \
+    && dnf clean all
+
+WORKDIR /launcher
+COPY launcher/Cargo.toml launcher/build.rs ./
+COPY launcher/src/ ./src/
+
+RUN cargo build --release
+
+# ============================================================================
+# Stage 5b: Build the read-only ext4 guest root disk
+# ============================================================================
+FROM debian:bookworm AS worker-sandbox-rootfs-image
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    e2fsprogs \
+    coreutils \
+    gawk \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=sandbox-rootfs / /sandbox-rootfs/
+COPY --from=package-builder /pkgs /sandbox-rootfs/pkgs
+COPY docker/build-rootfs-image.sh /usr/local/bin/build-rootfs-image.sh
+
+RUN sed -i '/^cgroup_mem_swap_max/d' /sandbox-rootfs/sandbox_api/config/sandbox.cfg \
+    && bash /sandbox-rootfs/sandbox_api/guest-dns.sh --prepare-rootfs /sandbox-rootfs
+RUN chmod +x /usr/local/bin/build-rootfs-image.sh \
+    && /usr/local/bin/build-rootfs-image.sh /sandbox-rootfs /sandbox-rootfs.img
+
+# ============================================================================
+# Stage 6: Shared combined worker host (Fedora for libkrun runtime)
+#
+# Final targets:
+#   - worker-sandbox-baked: KVM default; packages live in a read-only ext4
+#                           block root, so no package virtio-fs mount is needed
+#   - worker-sandbox-legacy: directory root plus /host-packages for legacy KVM
+#                            deployments and KVM_ENABLED=false direct mode
+#   - worker-sandbox-{true,false}: Compose aliases selected by KVM_ENABLED
+# ============================================================================
+FROM fedora:43 AS worker-sandbox-base
+
+RUN dnf install -y --setopt=install_weak_deps=False \
+    libkrun \
+    socat \
+    curl \
+    unzip \
+    util-linux \
+    grep \
+    gawk \
+    findutils \
+    ca-certificates \
+    && dnf clean all
+
+# Install Bun runtime (for the worker process on the host side)
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:${PATH}"
+
+# --- Launcher (runs on host, boots microVM) ---
+COPY --from=launcher-builder /launcher/target/release/sandbox-launcher /usr/local/bin/launcher
+COPY --from=nsjail-builder /usr/local/bin/sandbox-rootfs-setup /sandbox-rootfs-setup
+
+# --- Launcher entrypoint (resolver configuration before VM boot) ---
+COPY launcher/entrypoint.sh /usr/local/bin/launcher-entrypoint.sh
+COPY docker/start-direct-sandbox.sh /usr/local/bin/start-direct-sandbox.sh
+RUN chmod +x /usr/local/bin/launcher-entrypoint.sh /usr/local/bin/start-direct-sandbox.sh
+
+# --- Worker ---
+WORKDIR /worker
+COPY service/package.json service/bun.lock ./
+RUN bun install --frozen-lockfile --production
+COPY --from=worker-builder /app/.build ./.build
+COPY --from=worker-builder /app/src ./src
+COPY --from=worker-builder /app/src/matplotlib.py /app/src/matplotlib-async.py ./
+
+# --- Supervisor ---
+COPY docker/supervisor.sh /supervisor.sh
+RUN chmod +x /supervisor.sh
+
+WORKDIR /
+EXPOSE 2000 3113
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD curl -f http://localhost:3113/health || exit 1
+
+CMD ["/supervisor.sh"]
+
+# Legacy directory-root target. Keep this for deployments that intentionally
+# mount packages at /host-packages, and for the KVM_ENABLED=false direct path.
+FROM worker-sandbox-base AS worker-sandbox-legacy
+
+COPY --from=sandbox-rootfs / /sandbox-rootfs/
+
+RUN sed -i '/^cgroup_mem_swap_max/d' /sandbox-rootfs/sandbox_api/config/sandbox.cfg \
+    && bash /sandbox-rootfs/sandbox_api/guest-dns.sh --prepare-rootfs /sandbox-rootfs \
+    && mkdir -p /host-packages
+
+# KVM production default. The package tree is part of the read-only block root,
+# avoiding host file-descriptor retention from package lookups over virtio-fs.
+FROM worker-sandbox-base AS worker-sandbox-baked
+
+COPY --from=worker-sandbox-rootfs-image /sandbox-rootfs.img /sandbox-rootfs.img
+
+ENV LAUNCHER_ROOT_DISK=/sandbox-rootfs.img \
+    LAUNCHER_ROOT_DISK_READ_ONLY=true \
+    LAUNCHER_ROOT_DEVICE=/dev/vda \
+    LAUNCHER_ROOT_FSTYPE=ext4 \
+    LAUNCHER_ROOT_OPTIONS=ro
+
+# Compose derives these aliases from KVM_ENABLED so the direct path keeps
+# selecting the directory-root image without duplicating the baked rootfs.
+FROM worker-sandbox-baked AS worker-sandbox-true
+FROM worker-sandbox-legacy AS worker-sandbox-false
+
+FROM worker-sandbox-true AS worker-sandbox-default

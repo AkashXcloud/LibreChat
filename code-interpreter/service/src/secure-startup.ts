@@ -1,0 +1,391 @@
+import {
+  checkpointPipelineBudgetMs,
+  env,
+  lambdaMicrovmNumericConfigError,
+} from './config';
+import { INTERNAL_SERVICE_TOKEN_ENV } from './internal-service-auth';
+import { isValidBridgeWorkerId } from '../../packages/code/src/protocol';
+import { isBridgeEnabled } from './bridge/enabled';
+
+export class SecureStartupConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SecureStartupConfigError';
+  }
+}
+
+function nonEmpty(value: string | undefined): boolean {
+  return value !== undefined && value.trim().length > 0;
+}
+
+function requireValue(name: string, value: string | undefined): void {
+  if (!nonEmpty(value)) {
+    throw new SecureStartupConfigError(`${name} is required in CODEAPI_HARDENED_SANDBOX_MODE`);
+  }
+}
+
+function requireStrongSecret(name: string, value: string | undefined, minBytes = 32): void {
+  requireValue(name, value);
+  if (Buffer.byteLength(value ?? '', 'utf8') < minBytes) {
+    throw new SecureStartupConfigError(`${name} must be at least ${minBytes} bytes in CODEAPI_HARDENED_SANDBOX_MODE`);
+  }
+}
+
+function rejectValue(name: string, value: string | undefined): void {
+  if (nonEmpty(value)) {
+    throw new SecureStartupConfigError(`${name} must not be configured in CODEAPI_HARDENED_SANDBOX_MODE`);
+  }
+}
+
+function requireSafeWholeNumber(name: string, value: number, min: number): void {
+  if (!Number.isSafeInteger(value) || value < min) {
+    throw new SecureStartupConfigError(
+      `${name} must be a whole number of at least ${min}`,
+    );
+  }
+}
+
+const AWS_MANAGED_INTERNET_EGRESS_SUFFIX =
+  ':aws:network-connector:aws-network-connector:INTERNET_EGRESS';
+
+export function validateApiHardenedConfig(): void {
+  if (!env.HARDENED_SANDBOX_MODE) return;
+  rejectValue('CODEAPI_EGRESS_GRANT_SECRET', process.env.CODEAPI_EGRESS_GRANT_SECRET);
+  requireValue('EGRESS_GATEWAY_URL', env.EGRESS_GATEWAY_URL);
+  requireValue(INTERNAL_SERVICE_TOKEN_ENV, process.env[INTERNAL_SERVICE_TOKEN_ENV]);
+}
+
+/** Validate bridge credentials in every process that exposes bridge routes. */
+export function validateApiBridgePolicy(): void {
+  if (!isBridgeEnabled()) return;
+  if (env.BRIDGE_TOKEN !== env.BRIDGE_TOKEN.trim()) {
+    throw new SecureStartupConfigError(
+      'CODEAPI_BRIDGE_TOKEN must not contain surrounding whitespace',
+    );
+  }
+  const bridgeEnabled =
+    env.SANDBOX_BACKEND === 'remote-bridge' ||
+    env.BRIDGE_AUTH_MODE === 'paired';
+  if (bridgeEnabled) {
+    if (!env.BRIDGE_DYNAMIC_WORKERS) {
+      requireValue('CODEAPI_BRIDGE_WORKER_ID', env.BRIDGE_WORKER_ID);
+      if (!isValidBridgeWorkerId(env.BRIDGE_WORKER_ID ?? '')) {
+        throw new SecureStartupConfigError(
+          'CODEAPI_BRIDGE_WORKER_ID must match the bridge worker ID format',
+        );
+      }
+    }
+    requireValue('CODEAPI_BRIDGE_TOKEN', env.BRIDGE_TOKEN);
+  }
+  if (env.SANDBOX_BACKEND === 'remote-bridge') {
+    requireSafeWholeNumber('JOB_TIMEOUT', env.JOB_TIMEOUT, 1);
+    if (env.PTC_MODE === 'blocking') {
+      throw new SecureStartupConfigError(
+        'PTC replay is the only supported PTC mode for the remote-bridge backend (unset PTC_MODE=blocking)',
+      );
+    }
+  }
+  if (!env.HARDENED_SANDBOX_MODE) return;
+  requireStrongSecret('CODEAPI_BRIDGE_TOKEN', env.BRIDGE_TOKEN);
+  if (env.BRIDGE_AUTH_MODE !== 'paired') {
+    throw new SecureStartupConfigError(
+      'Hardened API deployments with bridge routes enabled require CODEAPI_BRIDGE_AUTH_MODE=paired',
+    );
+  }
+}
+
+export function validateWorkerHardenedConfig(): void {
+  if (!env.HARDENED_SANDBOX_MODE) return;
+  rejectValue('CODEAPI_EGRESS_GRANT_SECRET', process.env.CODEAPI_EGRESS_GRANT_SECRET);
+  rejectValue('CODEAPI_EXECUTION_MANIFEST_SECRET', process.env.CODEAPI_EXECUTION_MANIFEST_SECRET);
+  rejectValue('CODEAPI_SYNTHETIC_ACCESS_TOKEN', process.env.CODEAPI_SYNTHETIC_ACCESS_TOKEN);
+  requireValue('EGRESS_GATEWAY_URL', env.EGRESS_GATEWAY_URL);
+  requireValue(INTERNAL_SERVICE_TOKEN_ENV, process.env[INTERNAL_SERVICE_TOKEN_ENV]);
+  requireValue('CODEAPI_EXECUTION_MANIFEST_PRIVATE_KEY', env.EXECUTION_MANIFEST_PRIVATE_KEY);
+}
+
+function hostedAppKey(name: string, raw: string): Buffer {
+  const normalized = raw.trim();
+  const key = Buffer.from(normalized, 'base64');
+  if (
+    key.length !== 32
+    || key.toString('base64').replace(/=+$/, '') !== normalized.replace(/=+$/, '')
+  ) {
+    throw new SecureStartupConfigError(
+      `${name} must be base64 encoding exactly 32 bytes`,
+    );
+  }
+  return key;
+}
+
+function validateHostedAppsSharedConfig(): Buffer {
+  if (env.SANDBOX_BACKEND !== 'lambda-microvm') {
+    throw new SecureStartupConfigError('Hosted apps require CODEAPI_SANDBOX_BACKEND=lambda-microvm');
+  }
+  if (env.EXECUTION_PROFILE !== 'stateful' || env.RUNTIME_SESSION_MODE === 'stateless') {
+    throw new SecureStartupConfigError(
+      'CODEAPI_HOSTED_APPS_ENABLED=true requires the stateful execution profile',
+    );
+  }
+  return hostedAppKey('CODEAPI_HOSTED_APP_CREDENTIAL_KEY', env.HOSTED_APP_CREDENTIAL_KEY);
+}
+
+/** API pods decrypt short-lived preview credentials but never receive AWS IAM
+ * control-plane permissions. Validate only their routing/key contract; the
+ * worker validator below owns image and checkpoint configuration. */
+export function validateHostedAppsApiConfig(): void {
+  if (!env.HOSTED_APPS_ENABLED) return;
+  const credentialKey = validateHostedAppsSharedConfig();
+  const previewSigningKey = hostedAppKey(
+    'CODEAPI_HOSTED_APP_PREVIEW_SIGNING_KEY',
+    env.HOSTED_APP_PREVIEW_SIGNING_KEY,
+  );
+  if (credentialKey.equals(previewSigningKey)) {
+    throw new SecureStartupConfigError(
+      'Hosted app credential and preview signing keys must be distinct',
+    );
+  }
+  let previewOrigin: URL;
+  try {
+    previewOrigin = new URL(env.HOSTED_APP_PREVIEW_ORIGIN);
+  } catch {
+    throw new SecureStartupConfigError(
+      'CODEAPI_HOSTED_APP_PREVIEW_ORIGIN must be an absolute URL',
+    );
+  }
+  if (
+    previewOrigin.protocol !== 'https:'
+    || previewOrigin.username
+    || previewOrigin.password
+    || previewOrigin.pathname !== '/'
+    || previewOrigin.search
+    || previewOrigin.hash
+  ) {
+    throw new SecureStartupConfigError(
+      'CODEAPI_HOSTED_APP_PREVIEW_ORIGIN must be a bare HTTPS origin',
+    );
+  }
+}
+
+/**
+ * Make the endpoint identity trustworthy. Callers route by execution profile,
+ * so accepting a contradictory backend/session tuple would silently send work
+ * to the wrong infrastructure and could lose workspace continuity.
+ */
+export function validateExecutionProfilePolicy(options: {
+  requireBackendMatch?: boolean;
+} = {}): void {
+  const requireBackendMatch = options.requireBackendMatch ?? true;
+  if (env.EXECUTION_PROFILE === 'default') {
+    const compatibleBackend = env.SANDBOX_BACKEND === 'http'
+      || (
+        env.EXECUTION_PROFILE_SOURCE === 'inferred'
+        && env.SANDBOX_BACKEND === 'lambda-microvm'
+      );
+    if (
+      env.RUNTIME_SESSION_MODE !== 'stateless'
+      || (requireBackendMatch && !compatibleBackend)
+    ) {
+      throw new SecureStartupConfigError(
+        'CODEAPI_EXECUTION_PROFILE=default requires '
+          + (requireBackendMatch ? 'CODEAPI_SANDBOX_BACKEND=http and ' : '')
+          + 'CODEAPI_RUNTIME_SESSION_MODE=stateless',
+      );
+    }
+    return;
+  }
+
+  if (
+    env.RUNTIME_SESSION_MODE === 'stateless'
+    || (
+      requireBackendMatch
+      && env.SANDBOX_BACKEND !== 'lambda-microvm'
+      && env.SANDBOX_BACKEND !== 'remote-bridge'
+    )
+  ) {
+    throw new SecureStartupConfigError(
+      'CODEAPI_EXECUTION_PROFILE=stateful requires '
+        + (requireBackendMatch ? 'CODEAPI_SANDBOX_BACKEND=lambda-microvm or remote-bridge and ' : '')
+        + 'CODEAPI_RUNTIME_SESSION_MODE=affinity or strict',
+    );
+  }
+}
+
+export function validateApiSandboxBackendPolicy(): void {
+  if (env.HOSTED_APPS_ENABLED) validateHostedAppsSharedConfig();
+  if (env.BRIDGE_DYNAMIC_WORKERS && env.BRIDGE_AUTH_MODE !== 'paired') {
+    throw new SecureStartupConfigError(
+      'Dynamic remote bridge workers require CODEAPI_BRIDGE_AUTH_MODE=paired',
+    );
+  }
+}
+
+/**
+ * Backend-selection policy. Unlike the hardened-mode validators, this runs
+ * unconditionally: a misconfigured backend must never half-start.
+ */
+export function validateSandboxBackendPolicy(): void {
+  validateApiSandboxBackendPolicy();
+  if (env.RUNTIME_SESSION_MODE !== 'stateless' && env.SANDBOX_BACKEND === 'http') {
+    throw new SecureStartupConfigError(
+      `CODEAPI_RUNTIME_SESSION_MODE=${env.RUNTIME_SESSION_MODE} requires `
+        + 'the lambda-microvm or remote-bridge backend; use stateless mode with the http backend',
+    );
+  }
+  if (env.SANDBOX_BACKEND === 'remote-bridge') {
+    validateApiBridgePolicy();
+    return;
+  }
+  if (env.SANDBOX_BACKEND !== 'lambda-microvm') return;
+
+  const numericConfigError = lambdaMicrovmNumericConfigError(env);
+  if (numericConfigError !== undefined) {
+    throw new SecureStartupConfigError(numericConfigError);
+  }
+  requireSafeWholeNumber('JOB_TIMEOUT', env.JOB_TIMEOUT, 1);
+  requireSafeWholeNumber(
+    'CODEAPI_RUNTIME_SESSION_LOCK_WAIT_MS',
+    env.RUNTIME_SESSION_LOCK_WAIT_MS,
+    0,
+  );
+  requireSafeWholeNumber('CODEAPI_CHECKPOINT_MAX_BYTES', env.CHECKPOINT_MAX_BYTES, 1);
+  requireSafeWholeNumber('CODEAPI_CHECKPOINT_TIMEOUT_MS', env.CHECKPOINT_TIMEOUT_MS, 1);
+  if (env.PTC_MODE === 'blocking') {
+    throw new SecureStartupConfigError(
+      'PTC replay is the only supported PTC mode for the lambda-microvm backend (unset PTC_MODE=blocking)',
+    );
+  }
+  if (env.LAMBDA_MICROVM_IMAGE_ARN.trim().length === 0) {
+    throw new SecureStartupConfigError('LAMBDA_MICROVM_IMAGE_ARN is required for the lambda-microvm backend');
+  }
+  if (
+    env.RUNTIME_SESSION_MODE !== 'stateless'
+    && !nonEmpty(env.LAMBDA_MICROVM_IMAGE_VERSION)
+  ) {
+    throw new SecureStartupConfigError(
+      'LAMBDA_MICROVM_IMAGE_VERSION must be pinned for stateful runtime sessions',
+    );
+  }
+  if (env.HARDENED_SANDBOX_MODE && (env.LAMBDA_MICROVM_EGRESS_CONNECTOR_ARNS?.length ?? 0) === 0) {
+    throw new SecureStartupConfigError(
+      'LAMBDA_MICROVM_EGRESS_CONNECTOR_ARNS is required in CODEAPI_HARDENED_SANDBOX_MODE (MicroVMs default to public egress)',
+    );
+  }
+  if (
+    env.HARDENED_SANDBOX_MODE
+    && (env.LAMBDA_MICROVM_EGRESS_CONNECTOR_ARNS?.some(
+      (arn) => arn.trim().endsWith(AWS_MANAGED_INTERNET_EGRESS_SUFFIX),
+    ) ?? false)
+  ) {
+    throw new SecureStartupConfigError(
+      'AWS-managed INTERNET_EGRESS is forbidden in CODEAPI_HARDENED_SANDBOX_MODE; use only a VPC egress connector restricted to the gateway',
+    );
+  }
+  if (env.LAMBDA_MICROVM_ALLOW_SHELL && (env.HARDENED_SANDBOX_MODE || process.env.NODE_ENV === 'production')) {
+    throw new SecureStartupConfigError(
+      'LAMBDA_MICROVM_ALLOW_SHELL must not be enabled in production or hardened mode',
+    );
+  }
+  /* Checkpoints without object storage configured: MinioCheckpointStore silently
+   * falls back to localhost:9000/test-bucket, so warm reuse works
+   * but every checkpoint + restore fails against the dummy store and workspace
+   * state is lost on the first relaunch. Fail fast instead (mirrors the factory
+   * gate that constructs the store). Credentials may be a complete static
+   * MINIO pair or the workload's IAM role/web-identity provider. */
+  if (env.SESSION_CHECKPOINTS && env.RUNTIME_SESSION_MODE !== 'stateless') {
+    const checkpointBudgetMs = checkpointPipelineBudgetMs(
+      env.LAMBDA_MICROVM_LAUNCH_TIMEOUT_MS,
+      env.CHECKPOINT_TIMEOUT_MS,
+    );
+    if (env.JOB_TIMEOUT <= checkpointBudgetMs) {
+      throw new SecureStartupConfigError(
+        `JOB_TIMEOUT must exceed the full session checkpoint reserve (${checkpointBudgetMs}ms): `
+          + 'one shared LAMBDA_MICROVM_LAUNCH_TIMEOUT_MS token budget '
+          + '+ two CODEAPI_CHECKPOINT_TIMEOUT_MS + two capped object metadata '
+          + 'operations + six bounded registry operations',
+      );
+    }
+    const missing = ['MINIO_ENDPOINT'].filter(
+      (name) => !nonEmpty(process.env[name]),
+    );
+    const hasAccessKey = nonEmpty(process.env.MINIO_ACCESS_KEY);
+    const hasSecretKey = nonEmpty(process.env.MINIO_SECRET_KEY);
+    if (hasAccessKey !== hasSecretKey) {
+      missing.push(hasAccessKey ? 'MINIO_SECRET_KEY' : 'MINIO_ACCESS_KEY');
+    }
+    if (!nonEmpty(process.env.CODEAPI_CHECKPOINT_BUCKET) && !nonEmpty(process.env.MINIO_BUCKET)) {
+      missing.push('CODEAPI_CHECKPOINT_BUCKET (or MINIO_BUCKET)');
+    }
+    if (missing.length > 0) {
+      throw new SecureStartupConfigError(
+        'Session checkpoints are enabled but object storage is not configured: '
+          + `${missing.join(', ')}. Set them or disable CODEAPI_SESSION_CHECKPOINTS.`,
+      );
+    }
+  }
+
+  if (env.HOSTED_APPS_ENABLED) {
+    /* Workers encrypt AWS port credentials but do not serve previews, so they
+     * need the credential key—not the separate URL-signing key or app origin. */
+    validateHostedAppsSharedConfig();
+    if (!env.SESSION_CHECKPOINTS) {
+      throw new SecureStartupConfigError(
+        'CODEAPI_HOSTED_APPS_ENABLED=true requires CODEAPI_SESSION_CHECKPOINTS=true',
+      );
+    }
+    requireValue('LAMBDA_MICROVM_APP_IMAGE_ARN', env.HOSTED_APP_IMAGE_ARN);
+    requireValue('LAMBDA_MICROVM_APP_IMAGE_VERSION', env.HOSTED_APP_IMAGE_VERSION);
+    for (const [name, expected] of [
+      ['LAMBDA_MICROVM_APP_CONTROL_PORT', '8080'],
+      ['LAMBDA_MICROVM_APP_PREVIEW_PORT', '3000'],
+      ['LAMBDA_MICROVM_APP_START_TIMEOUT_MS', '30000'],
+    ] as const) {
+      const configured = process.env[name]?.trim();
+      if (configured && configured !== expected) {
+        throw new SecureStartupConfigError(
+          `${name} cannot override the pinned app-host image contract (${expected})`,
+        );
+      }
+    }
+    requireSafeWholeNumber('LAMBDA_MICROVM_APP_CONTROL_PORT', env.HOSTED_APP_CONTROL_PORT, 1_024);
+    requireSafeWholeNumber('LAMBDA_MICROVM_APP_PREVIEW_PORT', env.HOSTED_APP_PREVIEW_PORT, 1_024);
+    if (env.HOSTED_APP_CONTROL_PORT !== 8080 || env.HOSTED_APP_PREVIEW_PORT !== 3000) {
+      throw new SecureStartupConfigError(
+        'Hosted app image contract requires control port 8080 and preview port 3000',
+      );
+    }
+    requireSafeWholeNumber(
+      'LAMBDA_MICROVM_APP_MAX_DURATION_SECONDS',
+      env.HOSTED_APP_MAX_DURATION_SECONDS,
+      120,
+    );
+    requireSafeWholeNumber('LAMBDA_MICROVM_APP_IDLE_SECONDS', env.HOSTED_APP_IDLE_SECONDS, 60);
+    requireSafeWholeNumber('LAMBDA_MICROVM_APP_SUSPEND_SECONDS', env.HOSTED_APP_SUSPEND_SECONDS, 0);
+    requireSafeWholeNumber('LAMBDA_MICROVM_APP_START_TIMEOUT_MS', env.HOSTED_APP_START_TIMEOUT_MS, 1);
+    if (env.HOSTED_APP_START_TIMEOUT_MS !== 30_000) {
+      throw new SecureStartupConfigError(
+        'Hosted app image contract requires a 30000ms resident startup timeout',
+      );
+    }
+    if (
+      env.HOSTED_APP_MAX_DURATION_SECONDS > 28_800
+      || env.HOSTED_APP_IDLE_SECONDS > 28_800
+      || env.HOSTED_APP_SUSPEND_SECONDS > 28_800
+    ) {
+      throw new SecureStartupConfigError('Hosted app lifetime controls must be at most 28800 seconds');
+    }
+  }
+}
+
+export function validateEgressGatewayHardenedConfig(): void {
+  if (!env.HARDENED_SANDBOX_MODE) return;
+  rejectValue('CODEAPI_SYNTHETIC_ACCESS_TOKEN', process.env.CODEAPI_SYNTHETIC_ACCESS_TOKEN);
+  requireStrongSecret('CODEAPI_EGRESS_GRANT_SECRET', env.EGRESS_GRANT_SECRET);
+  requireValue(INTERNAL_SERVICE_TOKEN_ENV, process.env[INTERNAL_SERVICE_TOKEN_ENV]);
+  requireValue('EGRESS_GATEWAY_FILE_SERVER_URL', env.EGRESS_GATEWAY_FILE_SERVER_URL);
+  requireValue('EGRESS_GATEWAY_TOOL_CALL_SERVER_URL', env.EGRESS_GATEWAY_TOOL_CALL_SERVER_URL);
+  requireValue('REDIS_HOST', process.env.REDIS_HOST);
+  if (!env.EGRESS_LEDGER_REQUIRED) {
+    throw new SecureStartupConfigError('CODEAPI_EGRESS_LEDGER_REQUIRED must be true in CODEAPI_HARDENED_SANDBOX_MODE');
+  }
+}

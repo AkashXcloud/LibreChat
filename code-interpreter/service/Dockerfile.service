@@ -1,0 +1,30 @@
+# Service API Dockerfile
+FROM oven/bun:1.4.2 AS base
+WORKDIR /usr/src/app
+
+# Install dependencies
+FROM base AS install
+RUN mkdir -p /temp/dev
+COPY service/package.json service/bun.lock /temp/dev/
+RUN cd /temp/dev && bun install --frozen-lockfile
+
+RUN mkdir -p /temp/prod
+COPY service/package.json service/bun.lock /temp/prod/
+RUN cd /temp/prod && bun install --frozen-lockfile --production
+
+# Build stage
+FROM base AS builder
+COPY --from=install /temp/dev/node_modules node_modules
+COPY service/src ./src
+COPY shared /usr/src/shared
+COPY packages/code/src /usr/src/packages/code/src
+COPY service/tsconfig.json ./
+RUN bun build ./src/service-api.ts --outdir .build --target bun --external '@opentelemetry/*'
+
+# Production stage
+FROM base AS production
+ENV NODE_ENV=production
+COPY --from=install /temp/prod/node_modules node_modules
+COPY --from=builder /usr/src/app/.build ./.build
+COPY --from=builder /usr/src/app/src ./src
+CMD ["bun", "run", ".build/service-api.js"]

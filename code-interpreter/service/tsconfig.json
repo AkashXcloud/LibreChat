@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "es2019",
+    "module": "commonjs",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "outDir": ".build",
+    "baseUrl": ".",
+    "types": ["node", "bun-types"],
+    "paths": {
+      "@/*": ["src/*"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "../shared/telemetry-core.ts",
+    "../packages/code/src/protocol.ts",
+    "../packages/code/src/identity.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "**/*.spec.ts",
+    "tsconfig-paths-bootstrap.mjs",
+    ".build",
+    ".build-service",
+    "/config/**/*",
+    "stress-tests"
+  ]
+}
