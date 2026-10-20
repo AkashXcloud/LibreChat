@@ -22,6 +22,7 @@ const {
   appleLogin,
   appleAdminLogin,
   setupSaml,
+  portalLogin,
 } = require('~/strategies');
 const { getLogStores } = require('~/cache');
 
@@ -88,6 +89,9 @@ const configureSocialLogins = async (app, appConfig) => {
     maxAgeMs: appConfig?.registration?.oauthStateTtlMs,
   };
 
+  if (process.env.PORTAL_JWT_SECRET) {
+    passport.use('portal', portalLogin());
+  }
   if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     passport.use(googleLogin(stateOptions));
     passport.use('googleAdmin', googleAdminLogin());

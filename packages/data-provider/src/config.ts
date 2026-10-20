@@ -3173,6 +3173,7 @@ export type TStartupConfig = {
   openidLabel: string;
   openidImageUrl: string;
   openidAutoRedirect: boolean;
+  portalLoginEnabled?: boolean;
   samlLabel: string;
   samlImageUrl: string;
   /** LDAP Auth Configuration */
