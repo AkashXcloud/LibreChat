@@ -1,3 +1,4 @@
+const jwt = require('jsonwebtoken');
 const { Strategy: JwtStrategy } = require('passport-jwt');
 const socialLogin = require('./socialLogin');
 
@@ -5,6 +6,26 @@ const socialLogin = require('./socialLogin');
  * AkashX client portal login: the portal sets a `_token` JWT cookie on the shared
  * parent domain (same contract Airflow uses). Users are matched by email.
  */
+const PORTAL_COOKIE = '_token';
+const getAudience = () => process.env.PORTAL_JWT_AUDIENCE || 'akashx';
+
+/** Email from a valid portal `_token` cookie, or null */
+const getPortalEmail = (req) => {
+  const token = req.cookies?.[PORTAL_COOKIE];
+  if (!token || !process.env.PORTAL_JWT_SECRET) {
+    return null;
+  }
+  try {
+    const payload = jwt.verify(token, process.env.PORTAL_JWT_SECRET, {
+      algorithms: ['HS256'],
+      audience: getAudience(),
+    });
+    return typeof payload.email === 'string' ? payload.email.trim().toLowerCase() : null;
+  } catch {
+    return null;
+  }
+};
+
 const getProfileDetails = ({ profile }) => ({
   email: profile.email,
   username: profile.firstName,
@@ -17,10 +38,10 @@ const portalLogin = socialLogin('portal', getProfileDetails);
 const portalStrategy = () =>
   new JwtStrategy(
     {
-      jwtFromRequest: (req) => req.cookies?._token ?? null,
+      jwtFromRequest: (req) => req.cookies?.[PORTAL_COOKIE] ?? null,
       secretOrKey: process.env.PORTAL_JWT_SECRET,
       algorithms: ['HS256'],
-      audience: process.env.PORTAL_JWT_AUDIENCE || 'akashx',
+      audience: getAudience(),
     },
     (payload, done) => {
       if (!payload?.email) {
@@ -31,3 +52,4 @@ const portalStrategy = () =>
   );
 
 module.exports = portalStrategy;
+module.exports.getPortalEmail = getPortalEmail;
