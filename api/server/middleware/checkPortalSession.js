@@ -1,6 +1,6 @@
 const jwt = require('jsonwebtoken');
 const { logger, runAsSystem } = require('@librechat/data-schemas');
-const { getPortalEmail } = require('~/strategies/portalStrategy');
+const { isPortalSessionStale } = require('~/strategies/portalSession');
 const { getUserById } = require('~/models');
 
 /**
@@ -24,7 +24,7 @@ const checkPortalSession = async (req, res, next) => {
     return next();
   }
 
-  if (user?.provider !== 'portal' || getPortalEmail(req) === user.email) {
+  if (!isPortalSessionStale(req, user)) {
     return next();
   }
 

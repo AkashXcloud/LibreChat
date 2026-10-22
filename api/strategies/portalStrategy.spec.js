@@ -53,6 +53,11 @@ describe('portalStrategy', () => {
     });
   });
 
+  it('lowercases the portal email so mixed-case portal users match their account', () => {
+    const profile = { email: ' Jane@AkashX.ai ', firstName: 'Jane' };
+    expect(getProfileDetails({ profile }).email).toBe('jane@akashx.ai');
+  });
+
   it.each([
     ['no cookie', {}],
     ['wrong secret', { _token: portalToken({}, 'other-secret') }],

@@ -5,7 +5,6 @@ jest.mock('@librechat/data-schemas', () => ({
   runAsSystem: (fn) => fn(),
 }));
 jest.mock('~/models', () => ({ getUserById: jest.fn() }));
-jest.mock('~/strategies/socialLogin', () => jest.fn(() => jest.fn()));
 
 const { getUserById } = require('~/models');
 const checkPortalSession = require('./checkPortalSession');
