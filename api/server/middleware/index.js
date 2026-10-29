@@ -14,6 +14,7 @@ const {
   sendValidationResponse,
 } = require('./messageValidation');
 const checkDomainAllowed = require('./checkDomainAllowed');
+const checkPortalSession = require('./checkPortalSession');
 const { markOAuthNavigation } = require('./oauthNavigation');
 const requireSameOrigin = require('./requireSameOrigin');
 const requireLocalAuth = require('./requireLocalAuth');
@@ -65,6 +66,7 @@ module.exports = {
   configMiddleware,
   strictConfigMiddleware,
   checkDomainAllowed,
+  checkPortalSession,
   validateMessageReq,
   canReadActiveJobConversation,
   sendValidationResponse,

@@ -78,7 +78,7 @@ router.post(
   setBalanceConfig,
   loginController,
 );
-router.post('/refresh', refreshController);
+router.post('/refresh', middleware.checkPortalSession, refreshController);
 router.post('/cloudfront/refresh', middleware.requireJwtAuth, (req, res) => {
   const result = getCloudFrontAuthCookieRefreshResult(req, res);
   if (!result.enabled) {

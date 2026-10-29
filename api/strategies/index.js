@@ -14,6 +14,7 @@ const appleLogin = require('./appleStrategy');
 const { appleAdminLogin } = appleLogin;
 const ldapLogin = require('./ldapStrategy');
 const jwtLogin = require('./jwtStrategy');
+const portalLogin = require('./portalStrategy');
 
 module.exports = {
   appleLogin,
@@ -34,4 +35,5 @@ module.exports = {
   ldapLogin,
   setupSaml,
   openIdJwtLogin,
+  portalLogin,
 };

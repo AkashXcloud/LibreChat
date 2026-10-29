@@ -67,6 +67,20 @@ router.get('/error', (req, res) => {
 });
 
 /**
+ * AkashX portal route: reads the portal's `_token` cookie, no IdP round-trip
+ */
+router.get(
+  '/portal',
+  passport.authenticate('portal', {
+    failureRedirect: process.env.PORTAL_LOGIN_URL,
+    session: false,
+  }),
+  setBalanceConfig,
+  checkDomainAllowed,
+  oauthHandler,
+);
+
+/**
  * Google Routes
  */
 router.get(
