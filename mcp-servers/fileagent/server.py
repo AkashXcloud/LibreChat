@@ -140,7 +140,7 @@ def _find_body_box(slide):
 def _artifact_path(path: str) -> Path:
     """Resolve a URL or local path to a generated artifact in the output directory."""
     parsed = urlparse(path)
-    candidate = Path(path)
+    output_dir = OUTPUT_DIR.resolve()
     if parsed.scheme:
         public_origin = urlparse(PUBLIC_URL)
         request_origin = (parsed.scheme, parsed.netloc)
@@ -153,7 +153,14 @@ def _artifact_path(path: str) -> Path:
             f"/files/{filename}",
         }:
             raise ValueError("Unsupported presentation URL")
-        candidate = OUTPUT_DIR / filename
+        candidate = output_dir / filename
+    else:
+        candidate = Path(path)
+        # IMPORTANT:
+        # MCP tools sometimes return only the filename,
+        # without the /tmp/fileagent directory.
+        if not candidate.is_absolute():
+            candidate = output_dir / candidate
     filename = candidate.name
     if (
         filename != LEGACY_PRESENTATION_NAME
@@ -161,7 +168,8 @@ def _artifact_path(path: str) -> Path:
     ):
         raise ValueError("Unsupported artifact filename")
     resolved_path = candidate.resolve()
-    if resolved_path.parent != OUTPUT_DIR.resolve():
+    # Security: only allow files directly inside OUTPUT_DIR.
+    if resolved_path.parent != output_dir:
         raise ValueError("Artifact path must be inside the output directory")
     if not resolved_path.is_file():
         raise FileNotFoundError(f"Artifact does not exist: {filename}")
