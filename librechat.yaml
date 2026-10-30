@@ -14,11 +14,16 @@ fileConfig:
       - '^image/png$'
       - '^image/jpeg$'
       - '^image/jpg$'
+      - '^application/vnd\.openxmlformats-officedocument\.presentationml\.presentation$'
   text:
     supportedMimeTypes:
       - '^application/pdf$'
       - '^text/.*$'
       - '^application/x-ocr-document$'
+      - '^application/json$'
+webSearch:
+  searchProvider: tavily
+  scraperProvider: tavily
 interface:
   contextUsage: true
   contextCost: true
