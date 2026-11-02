@@ -20,6 +20,125 @@ fileConfig:
       - '^text/.*$'
       - '^application/x-ocr-document$'
 interface:
+  theme:
+    version: 1
+    name: akashx-purple-blue
+
+    modes:
+      light:
+        colors:
+          # Backgrounds
+          rgb-surface-primary: '255 255 255'
+          rgb-surface-primary-alt: '248 249 255'
+          rgb-surface-canvas: '247 248 252'
+          rgb-surface-secondary: '248 249 255'
+          rgb-surface-tertiary: '240 243 252'
+          rgb-surface-dialog: '255 255 255'
+          rgb-surface-chat: '255 255 255'
+          rgb-surface-composer: '248 249 255'
+
+          # Interactive surfaces
+          rgb-surface-hover: '240 243 252'
+          rgb-surface-hover-alt: '235 237 250'
+          rgb-surface-active: '235 230 255'
+          rgb-surface-active-alt: '226 218 255'
+
+          # Primary Purple
+          rgb-accent-primary: '109 77 255'
+          rgb-accent-primary-hover: '98 67 240'
+
+          # Buttons
+          rgb-surface-submit: '117 87 255'
+          rgb-surface-submit-hover: '98 67 240'
+
+          # Focus and links
+          rgb-ring-primary: '117 87 255'
+          rgb-link: '98 67 240'
+
+          # Text
+          rgb-text-primary: '8 12 38'
+          rgb-text-secondary: '67 87 117'
+          rgb-text-tertiary: '97 126 168'
+
+          # Borders
+          rgb-border-light: '222 227 240'
+          rgb-border-medium: '190 199 220'
+
+          # Status colors
+          rgb-status-success: '12 172 119'
+          rgb-status-error: '223 67 67'
+          rgb-status-warning: '254 130 61'
+
+        appearance:
+          controlRadius: '0.75rem'
+          surfaceRadius: '1rem'
+          largeSurfaceRadius: '1.5rem'
+          menuRadius: '0.75rem'
+          buttonHeight: '2.5rem'
+          fieldHeight: '2.5rem'
+          fontFamily: 'Inter, sans-serif'
+          displayFontFamily: 'Inter, sans-serif'
+
+      dark:
+        colors:
+          # Backgrounds
+          rgb-surface-primary: '8 13 38'
+          rgb-surface-secondary: '13 21 51'
+          rgb-surface-tertiary: '21 36 72'
+          rgb-surface-dialog: '16 26 58'
+          rgb-surface-canvas: '8 13 38'
+          rgb-surface-primary-alt: '8 13 38'
+          rgb-surface-composer: '13 21 51'
+          rgb-presentation: '21 36 72'
+          # --surface-chat: '13 21 51'
+          rgb-surface-chat: '13 21 51'
+          # --surface-hover: '21 36 72'
+          surface-hover: '21 36 72'
+          surface-hover-alt: '21 36 72'
+          surface-chat: '13 21 51'
+
+          rgb-surface-active: '29 36 75'
+          rgb-surface-active-alt: '21 36 72'
+
+          rgb-surface-hover: '21 36 72'
+          rgb-surface-hover-alt: '29 36 75'
+
+          # Primary Purple
+          rgb-accent-primary: '151 128 255'
+          rgb-accent-primary-hover: '129 102 255'
+
+          # Buttons
+          rgb-surface-submit: '117 87 255'
+          rgb-surface-submit-hover: '98 67 240'
+
+          # Focus and links
+          rgb-ring-primary: '151 128 255'
+          rgb-link: '151 128 255'
+
+          # Text
+          rgb-text-primary: '244 248 255'
+          rgb-text-secondary: '205 218 237'
+          rgb-text-tertiary: '142 161 189'
+
+          # Borders
+          rgb-border-light: '35 49 91'
+          rgb-border-medium: '57 76 125'
+
+          # Status colors
+          rgb-status-success: '102 242 195'
+          rgb-status-error: '223 67 67'
+          rgb-status-warning: '255 183 3'
+
+        appearance:
+          controlRadius: '0.75rem'
+          surfaceRadius: '1rem'
+          largeSurfaceRadius: '1.5rem'
+          menuRadius: '0.75rem'
+          buttonHeight: '2.5rem'
+          fieldHeight: '2.5rem'
+          fontFamily: 'Inter, sans-serif'
+          displayFontFamily: 'Inter, sans-serif'
+
   contextUsage: true
   contextCost: true
   customWelcome: Welcome to AkashX! Enjoy your experience.
