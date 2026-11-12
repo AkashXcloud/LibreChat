@@ -280,14 +280,22 @@ mcpSettings:
   - akashx-knowledge
   - akashx-documents
 mcpServers:
+  # you can use the local akashxdb-mcp container from docker-compose.override.yml for testing, or the staging server at mcp-server.tesla-stg.azure.akashx.ai/mcp.
+  # The staging server returns 502 errors, so the local container is preferred for development.
+  # mcp-akashxdb:
+  #   type: streamable-http
+  #   # Staging (https://mcp-server.tesla-stg.azure.akashx.ai/mcp) returns 502;
+  #   # using the local akashxdb-mcp container from docker-compose.override.yml.
+  #   url: http://akashxdb-mcp:8000/mcp
+  #   # ties each tool call to its agent run (the run's messageId) in the MCP audit log
+  #   headers:
+  #     X-LibreChat-Message-Id: '{{LIBRECHAT_BODY_MESSAGEID}}'
+  #   requiresOAuth: false
+  #   timeout: 300000
+  #   initTimeout: 150000
   mcp-akashxdb:
     type: streamable-http
-    # Staging (https://mcp-server.tesla-stg.azure.akashx.ai/mcp) returns 502;
-    # using the local akashxdb-mcp container from docker-compose.override.yml.
-    url: http://akashxdb-mcp:8000/mcp
-    # ties each tool call to its agent run (the run's messageId) in the MCP audit log
-    headers:
-      X-LibreChat-Message-Id: '{{LIBRECHAT_BODY_MESSAGEID}}'
+    url: https://mcp-server.tesla-stg.azure.akashx.ai/mcp
     requiresOAuth: false
     timeout: 300000
     initTimeout: 150000
