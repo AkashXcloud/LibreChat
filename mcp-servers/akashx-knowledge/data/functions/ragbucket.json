@@ -1,0 +1,21 @@
+{
+  "name": "RagBucket",
+  "kind": "product",
+  "description": "A company product: a managed collection of ingested documents (from object storage, SharePoint, etc.) stored across internal tables and made queryable + semantically searchable.",
+  "use_cases": [
+    "The user refers to 'the RagBucket', 'ingested documents', or a document collection.",
+    "You need the raw text or metadata of documents that were ingested into a bucket.",
+    "Example: 'How many documents are in the support RagBucket?'"
+  ],
+  "parameters": [
+    {"name": "bucket", "type": "string", "description": "The RagBucket / collection name.", "example": "support_docs"}
+  ],
+  "returns": "Rows from the RagBucket's backing tables (documents, text, metadata).",
+  "cost": "cheap to query; ingestion cost scales with document count",
+  "supported_dialects": ["starrocks", "postgres", "mysql", "sqlite"],
+  "grounding": {
+    "physical_tables": ["ragbucket_documents", "ragbucket_document_text", "ragbucket_metadata"],
+    "text_column": "ragbucket_document_text.content",
+    "query_hint": "Join ragbucket_documents d to ragbucket_document_text t ON t.document_id = d.id; extracted text is t.content."
+  }
+}

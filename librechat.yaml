@@ -129,6 +129,11 @@ interface:
     use: false
   fileCitations: true
   feedback: true
+  remoteAgents:
+    use: true
+    create: true
+    share: false
+    public: false
 registration:
   socialLogins:
   - github
@@ -147,13 +152,52 @@ mcpSettings:
   allowedDomains:
   - mcp-server.tesla-stg.azure.akashx.ai
   - fileagent
+  - akashxdb-mcp
+  - akashx-knowledge
+  - akashx-documents
 mcpServers:
   mcp-akashxdb:
     type: streamable-http
-    url: https://mcp-server.tesla-stg.azure.akashx.ai/mcp
+    # Staging (https://mcp-server.tesla-stg.azure.akashx.ai/mcp) returns 502;
+    # using the local akashxdb-mcp container from docker-compose.override.yml.
+    url: http://akashxdb-mcp:8000/mcp
+    # ties each tool call to its agent run (the run's messageId) in the MCP audit log
+    headers:
+      X-LibreChat-Message-Id: '{{LIBRECHAT_BODY_MESSAGEID}}'
     requiresOAuth: false
     timeout: 300000
     initTimeout: 150000
+  mcp-akashxdb-scoped:
+    type: streamable-http
+    # Same AkashX MCP server, limited to Cognate's semantic model 1 (Financebench): only its
+    # tables, Ontology Views and RagBucket can be queried (see mcp-servers/akashxdb/audit_launcher.py)
+    url: http://akashxdb-mcp:8000/mcp
+    headers:
+      X-LibreChat-Message-Id: '{{LIBRECHAT_BODY_MESSAGEID}}'
+      X-Semantic-Model-Id: '1'
+    requiresOAuth: false
+    timeout: 300000
+    initTimeout: 150000
+  mcp-akashx-knowledge:
+    type: streamable-http
+    # AkashX product knowledge base (akashx-knowledge container in docker-compose.override.yml)
+    url: http://akashx-knowledge:8000/mcp
+    headers:
+      X-LibreChat-Message-Id: '{{LIBRECHAT_BODY_MESSAGEID}}'
+    requiresOAuth: false
+    timeout: 60000
+    initTimeout: 60000
+  mcp-akashx-documents:
+    type: streamable-http
+    # Filings in semantic model 1's RagBucket, read page by page without ASK
+    # (akashx-documents container in docker-compose.override.yml)
+    url: http://akashx-documents:8000/mcp
+    headers:
+      X-LibreChat-Message-Id: '{{LIBRECHAT_BODY_MESSAGEID}}'
+      X-Semantic-Model-Id: '1'
+    requiresOAuth: false
+    timeout: 120000
+    initTimeout: 60000
   mcp-fileagent:
     type: streamable-http
     url: 'http://fileagent:8002/mcp'
