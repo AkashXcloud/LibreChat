@@ -315,5 +315,120 @@ services:
       retries: 5
       start_period: 10s
 
+  # ── AkashX DB MCP ──
+  # Local build of github.com/AkashXcloud/mcp-server-akashxdb (cloned next to
+  # this repo), used while the staging mcp-server.tesla-stg.azure.akashx.ai is down.
+  akashxdb-mcp:
+    container_name: akashxdb-mcp
+    build:
+      context: ../../mcp-server-akashxdb
+      dockerfile_inline: |
+        FROM python:3.12-slim
+        WORKDIR /app
+        COPY . .
+        # mcp 1.16 (pulled in by fastmcp 2.12) imports a pydantic internal removed in 2.12+;
+        # sqlglot (same version as Cognate) and psycopg for the semantic-model scope (audit_launcher.py)
+        RUN --mount=type=cache,target=/root/.cache/pip \
+            pip install --default-timeout=120 --retries 10 . "pydantic>=2.11,<2.12" \
+                "sqlglot==27.15.2" "psycopg[binary]>=3.2,<4"
+        CMD ["mcp-server-starrocks", "--mode", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]
+    restart: always
+    # audit_launcher.py runs the server unchanged and logs each tool call (benchmarks);
+    # set AKASHX_MCP_AUDIT_LOG= (empty) to turn the audit log off.
+    command: ["python", "/audit/audit_launcher.py", "--mode", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]
+    volumes:
+      - ./mcp-servers/akashxdb:/audit
+    # SEMANTIC_MODEL_DSN: Superset/Cognate Postgres holding public.cognate_semantic_models (git-ignored);
+    # without it, scoped requests (X-Semantic-Model-Id) are refused
+    env_file:
+      - path: ./mcp-servers/akashxdb/.env
+        required: false
+    environment:
+      - MCP_AUDIT_LOG=${AKASHX_MCP_AUDIT_LOG-/audit/logs/mcp_audit.jsonl}
+      - STARROCKS_HOST=${AKASHX_MCP_HOST:-130.131.192.234}
+      - STARROCKS_PORT=${AKASHX_MCP_PORT:-9030}
+      - STARROCKS_USER=${AKASHX_MCP_USER:-root}
+      - STARROCKS_PASSWORD=${AKASHX_MCP_PASSWORD:-}
+      - STARROCKS_DB=${AKASHX_MCP_DB:-financebench}
+      - STARROCKS_POOL_SIZE=${AKASHX_MCP_POOL_SIZE:-16}
+    ports:
+      - "8010:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; socket.create_connection(('127.0.0.1', 8000), 2).close()"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # ── AkashX product knowledge base MCP ──
+  # Cognate's AkashX product docs + prebuilt index (RagBuckets, Ontology Views, Cognitive SQL,
+  # ASK) as tools: search_akashx_docs, describe_akashx_function, list_akashx_topics.
+  akashx-knowledge:
+    container_name: akashx-knowledge
+    build:
+      context: ./mcp-servers/akashx-knowledge
+    restart: always
+    # OPENAI_API_KEY for query embeddings (git-ignored); without it the server uses its offline index
+    env_file:
+      - path: ./mcp-servers/akashx-knowledge/.env
+        required: false
+    environment:
+      - MCP_AUDIT_LOG=${AKASHX_KB_AUDIT_LOG-/logs/mcp_audit.jsonl}
+    volumes:
+      - ./mcp-servers/akashx-knowledge/logs:/logs
+    ports:
+      - "8011:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; socket.create_connection(('127.0.0.1', 8000), 2).close()"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+  # ── AkashX RagBucket documents MCP ──
+  # Cognate's document tools (find_documents, search_documents, read_document, document_outline):
+  # filings of the semantic model's RagBucket read page by page from its chunks table with plain
+  # SELECTs, so the agent does not need ASK to read a filing. AkashX itself is unchanged.
+  akashx-documents:
+    container_name: akashx-documents
+    build:
+      context: ./mcp-servers/akashx-documents
+    restart: always
+    # OPENAI_API_KEY (query embeddings) and SEMANTIC_MODEL_DSN (which RagBucket a model allows); git-ignored
+    env_file:
+      - path: ./mcp-servers/akashx-documents/.env
+        required: false
+    environment:
+      - MCP_AUDIT_LOG=${AKASHX_DOCS_AUDIT_LOG-/logs/mcp_audit.jsonl}
+      - AKASHX_HOST=${AKASHX_MCP_HOST:-130.131.192.234}
+      - AKASHX_PORT=${AKASHX_MCP_PORT:-9030}
+      - AKASHX_USER=${AKASHX_MCP_USER:-root}
+      - AKASHX_PASSWORD=${AKASHX_MCP_PASSWORD:-}
+      - AKASHX_DB=${AKASHX_MCP_DB:-financebench}
+    volumes:
+      - ./mcp-servers/akashx-documents/logs:/logs
+      # pages + search vectors per document, built on first read (seeded from Cognate's .cognate_corpus)
+      - ./mcp-servers/akashx-documents/cache:/cache
+    ports:
+      - "8012:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; socket.create_connection(('127.0.0.1', 8000), 2).close()"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
 # volumes:
   # minio_data:  # disabled with Code Interpreter

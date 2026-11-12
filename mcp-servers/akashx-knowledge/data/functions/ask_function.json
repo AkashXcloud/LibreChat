@@ -1,0 +1,23 @@
+{
+  "name": "ask_function",
+  "kind": "workflow",
+  "description": "An 'Ask Function': runs an LLM prompt over every document in a RagBucket and materializes one structured row per document into a NEW table, which you can then query with plain SQL.",
+  "use_cases": [
+    "Evaluate/classify/extract from each document against a natural-language condition, then query the results.",
+    "Example: 'From the resumes bucket, find candidates in IT with 5+ years of experience.'"
+  ],
+  "parameters": [
+    {"name": "bucket", "type": "string", "description": "Source RagBucket / collection.", "example": "resumes"},
+    {"name": "prompt", "type": "string", "description": "Per-document instruction for the LLM.", "example": "Return industry and years_experience as JSON."},
+    {"name": "output_table", "type": "string", "description": "Name of the new table to create.", "example": "candidate_facts"}
+  ],
+  "returns": "A new table (name = output_table) with one structured row per document.",
+  "examples": ["ask_function(bucket='resumes', prompt='...', output_table='candidate_facts')"],
+  "requires_approval": true,
+  "cost": "expensive: one LLM call per document — confirm before running",
+  "supported_dialects": ["starrocks", "postgres", "mysql"],
+  "grounding": {
+    "invoke_via": "ask_function",
+    "query_hint": "After it runs, SELECT from output_table like any other table."
+  }
+}
