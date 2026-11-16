@@ -5,7 +5,7 @@ and both the prompt and the executor used to enforce it blindly. Real data can
 break a convention: in one warehouse 82 of 84 rows carried status 'deleted'
 with every extracted field filled and no deletion date, so every Ontology View
 query silently saw 2 documents and the agent fell back to slower, weaker
-sources (FinanceBench, 2026-10-12).
+sources.
 
 So each view is profiled (cached): how many rows have extracted values, and
 whether ``status = 'done'`` actually selects them. When it does, the convention

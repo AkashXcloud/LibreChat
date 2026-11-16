@@ -9,10 +9,11 @@ a document is rebuilt only when the bucket changes it:
 * each document's pages (its chunks in order, overlaps removed, table rows
   rebuilt by ``rows.rebuild_rows``),
 * its ``FileIndex`` (BM25 + embeddings when an embedder is configured),
-* the document cards (``cards``; model-built cards are read from cards-v1.json).
+* the document cards (``cards``: name, title and any cached description).
 
 The cache layout is Cognate's, so a folder copied from Cognate's
-``.cognate_corpus/<bucket>-<hash>`` is used as is.
+``.cognate_corpus/<bucket>-<hash>`` is used as is. The bucket's chunks table
+comes from the server's RagBucket catalog (``SHOW RAGBUCKET FROM <db>``).
 """
 
 from __future__ import annotations
@@ -44,7 +45,7 @@ _build_locks: dict[str, threading.Lock] = {}
 
 @dataclass
 class Document:
-    name: str                 # file name, e.g. 3M_2018_10K.pdf
+    name: str                 # file name, e.g. annual_report_2024.pdf
     title: str = ""           # the bucket's document title
     pages: int = 0
     chunks: int = 0
@@ -182,35 +183,14 @@ def _drop_overlap(previous: str, text: str, limit: int = 400) -> str:
     return text
 
 
-# --------------------------------------------------------------------------- #
-# discovery
-# --------------------------------------------------------------------------- #
-def chunks_table_for(fetch_rows: Callable[..., list[dict]], bucket: str) -> Optional[str]:
-    """The bucket's chunks table, from ``SHOW RAGBUCKET`` (fallback: ``<bucket>_chunks``)."""
-    try:
-        for row in fetch_rows("SHOW RAGBUCKET"):
-            lower = {str(k).lower(): v for k, v in row.items()}
-            if str(lower.get("ragbucket") or lower.get("name") or "").lower() == bucket.lower():
-                table = str(lower.get("chunks_table") or "").strip()
-                if table and _IDENT.match(table):
-                    return table
-                db = str(lower.get("database_name") or "").strip()
-                guess = f"{db}.{bucket}_chunks" if db else f"{bucket}_chunks"
-                return guess if _IDENT.match(guess) else None
-    except Exception as exc:
-        logger.info("[corpus] SHOW RAGBUCKET failed (%s); using the default chunks table name", exc)
-    guess = f"{bucket}_chunks"
-    return guess if _IDENT.match(guess) else None
-
-
-def open_corpus(bucket: str, fetch_rows: Callable[..., list[dict]], embedder: Any = None) -> Optional[Corpus]:
-    """The bucket's corpus with its document list and cards loaded, or None."""
+def open_corpus(bucket: str, chunks_table: str, fetch_rows: Callable[..., list[dict]],
+                embedder: Any = None) -> Optional[Corpus]:
+    """The bucket's corpus with its document list and cards loaded, or None when it has no documents."""
     from corpus.cards import load_cards
 
-    table = chunks_table_for(fetch_rows, bucket)
-    if not table:
+    if not _IDENT.match(chunks_table or ""):
         return None
-    corpus = Corpus(bucket=bucket, chunks_table=table, fetch_rows=fetch_rows, embedder=embedder)
+    corpus = Corpus(bucket=bucket, chunks_table=chunks_table, fetch_rows=fetch_rows, embedder=embedder)
     if not corpus.documents():
         return None
     corpus.cards = load_cards(corpus, corpus.docs)

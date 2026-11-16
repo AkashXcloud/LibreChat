@@ -149,6 +149,7 @@ actions:
   - librechat.ai
   - google.com
 mcpSettings:
+  # hosts LibreChat may open MCP connections to; add the host of a remote AkashX MCP server here
   allowedDomains:
   - mcp-server.tesla-stg.azure.akashx.ai
   - fileagent
@@ -158,23 +159,24 @@ mcpSettings:
 mcpServers:
   mcp-akashxdb:
     type: streamable-http
-    # Staging (https://mcp-server.tesla-stg.azure.akashx.ai/mcp) returns 502;
-    # using the local akashxdb-mcp container from docker-compose.override.yml.
+    # AkashX database tools: the local akashxdb-mcp container (needs COMPOSE_PROFILES=local-db-mcp in
+    # .env), or a remote AkashX MCP server: put its URL here and its host in
+    # mcpSettings.allowedDomains above. Write the URL itself, not a ${VARIABLE}: LibreChat checks the
+    # allowed domains before it resolves variables. With the local container the whole database is
+    # available unless AKASHX_SEMANTIC_MODEL_ID is set in .env.
     url: http://akashxdb-mcp:8000/mcp
     # ties each tool call to its agent run (the run's messageId) in the MCP audit log
     headers:
       X-LibreChat-Message-Id: '{{LIBRECHAT_BODY_MESSAGEID}}'
-    requiresOAuth: false
-    timeout: 300000
-    initTimeout: 150000
-  mcp-akashxdb-scoped:
-    type: streamable-http
-    # Same AkashX MCP server, limited to Cognate's semantic model 1 (Financebench): only its
-    # tables, Ontology Views and RagBucket can be queried (see mcp-servers/akashxdb/audit_launcher.py)
-    url: http://akashxdb-mcp:8000/mcp
-    headers:
-      X-LibreChat-Message-Id: '{{LIBRECHAT_BODY_MESSAGEID}}'
-      X-Semantic-Model-Id: '1'
+    # added to the context of agents that use these tools (written here because LibreChat does not
+    # share instructions fetched from servers with per-request headers such as the message id)
+    serverInstructions: |
+      AkashX database tools. Help people, including people who do not know SQL, get answers and insights from their data.
+      - Find the data before querying: read_query("SHOW DATABASES"), then db_summary(db=...) for a database's tables, then table_overview(table="database.table") for columns, sample rows and row count. Never guess table or column names; skip system databases (information_schema, sys, _statistics_).
+      - If SHOW DATABASES is refused, a semantic model is active: call db_summary with no arguments to see exactly which tables, Ontology Views and RagBuckets you may use.
+      - Write read-only SELECT/WITH queries with database.table names; aggregate in SQL and use LIMIT for row listings. AkashX SQL is MySQL-compatible.
+      - Ontology Views are views built from documents (one row per document with extracted fields). RagBuckets are document collections; ASK '<question>' ON <bucket> answers from a whole collection and is slower.
+      - Answer in plain language first, then the key numbers, and name the tables used. Do not change data unless the user explicitly asks.
     requiresOAuth: false
     timeout: 300000
     initTimeout: 150000
@@ -189,12 +191,16 @@ mcpServers:
     initTimeout: 60000
   mcp-akashx-documents:
     type: streamable-http
-    # Filings in semantic model 1's RagBucket, read page by page without ASK
+    # Documents in the AkashX RagBuckets, found, searched and read page by page without ASK
     # (akashx-documents container in docker-compose.override.yml)
     url: http://akashx-documents:8000/mcp
     headers:
       X-LibreChat-Message-Id: '{{LIBRECHAT_BODY_MESSAGEID}}'
-      X-Semantic-Model-Id: '1'
+    serverInstructions: |
+      AkashX document tools: the documents in RagBuckets (document collections), read page by page.
+      - find_documents() lists the collections you can use and their documents; find_documents(query) finds documents by name or title.
+      - search_documents(query, documents=[...]) finds passages with page numbers; read_document(document, page) reads up to 4 pages; document_outline(document) lists headings.
+      - Pass bucket when a document name exists in several collections. Cite the document and page you used.
     requiresOAuth: false
     timeout: 120000
     initTimeout: 60000

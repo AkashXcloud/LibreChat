@@ -316,12 +316,20 @@ services:
       start_period: 10s
 
   # ── AkashX DB MCP ──
-  # Local build of github.com/AkashXcloud/mcp-server-akashxdb (cloned next to
-  # this repo), used while the staging mcp-server.tesla-stg.azure.akashx.ai is down.
+  # Build of github.com/AkashXcloud/mcp-server-akashxdb, started only with the local-db-mcp profile
+  # (COMPOSE_PROFILES=local-db-mcp in .env). Leave the profile off when LibreChat uses a remote AkashX
+  # MCP server (url of mcp-akashxdb in librechat.yaml); then this container is neither built nor
+  # started.
+  # AKASHX_MCP_SOURCE in .env is the folder holding its pyproject.toml (default: two folders above
+  # this repo).
+  # The AkashX server it connects to is set with AKASHX_MCP_HOST/PORT/USER/PASSWORD (and optional
+  # AKASHX_MCP_DB, the default database). Without a semantic model the agent can use the whole
+  # server; set AKASHX_SEMANTIC_MODEL_ID (+ AKASHX_SEMANTIC_MODEL_DSN) to limit it to one model.
   akashxdb-mcp:
     container_name: akashxdb-mcp
+    profiles: ["local-db-mcp"]
     build:
-      context: ../../mcp-server-akashxdb
+      context: ${AKASHX_MCP_SOURCE:-../../mcp-server-akashxdb}
       dockerfile_inline: |
         FROM python:3.12-slim
         WORKDIR /app
@@ -333,24 +341,21 @@ services:
                 "sqlglot==27.15.2" "psycopg[binary]>=3.2,<4"
         CMD ["mcp-server-starrocks", "--mode", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]
     restart: always
-    # audit_launcher.py runs the server unchanged and logs each tool call (benchmarks);
-    # set AKASHX_MCP_AUDIT_LOG= (empty) to turn the audit log off.
+    # audit_launcher.py runs the server unchanged, adds the optional semantic-model scope, the
+    # assistant instructions and an audit log of each tool call (AKASHX_MCP_AUDIT_LOG= turns it off).
     command: ["python", "/audit/audit_launcher.py", "--mode", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]
     volumes:
       - ./mcp-servers/akashxdb:/audit
-    # SEMANTIC_MODEL_DSN: Superset/Cognate Postgres holding public.cognate_semantic_models (git-ignored);
-    # without it, scoped requests (X-Semantic-Model-Id) are refused
-    env_file:
-      - path: ./mcp-servers/akashxdb/.env
-        required: false
     environment:
       - MCP_AUDIT_LOG=${AKASHX_MCP_AUDIT_LOG-/audit/logs/mcp_audit.jsonl}
-      - STARROCKS_HOST=${AKASHX_MCP_HOST:-130.131.192.234}
+      - STARROCKS_HOST=${AKASHX_MCP_HOST:-}
       - STARROCKS_PORT=${AKASHX_MCP_PORT:-9030}
       - STARROCKS_USER=${AKASHX_MCP_USER:-root}
       - STARROCKS_PASSWORD=${AKASHX_MCP_PASSWORD:-}
-      - STARROCKS_DB=${AKASHX_MCP_DB:-financebench}
+      - STARROCKS_DB=${AKASHX_MCP_DB:-}
       - STARROCKS_POOL_SIZE=${AKASHX_MCP_POOL_SIZE:-16}
+      - SEMANTIC_MODEL_ID=${AKASHX_SEMANTIC_MODEL_ID:-}
+      - SEMANTIC_MODEL_DSN=${AKASHX_SEMANTIC_MODEL_DSN:-}
     ports:
       - "8010:8000"
     healthcheck:
@@ -394,28 +399,33 @@ services:
       start_period: 15s
 
   # ── AkashX RagBucket documents MCP ──
-  # Cognate's document tools (find_documents, search_documents, read_document, document_outline):
-  # filings of the semantic model's RagBucket read page by page from its chunks table with plain
-  # SELECTs, so the agent does not need ASK to read a filing. AkashX itself is unchanged.
+  # Document tools (find_documents, search_documents, read_document, document_outline): documents
+  # in the server's RagBuckets read page by page from their chunks tables with plain SELECTs, so the
+  # agent does not need ASK to read a document. Every RagBucket is available unless a semantic
+  # model is set (then only its RagBuckets). AkashX itself is unchanged.
   akashx-documents:
     container_name: akashx-documents
     build:
       context: ./mcp-servers/akashx-documents
     restart: always
-    # OPENAI_API_KEY (query embeddings) and SEMANTIC_MODEL_DSN (which RagBucket a model allows); git-ignored
+    # OPENAI_API_KEY for search embeddings (git-ignored); without it search is keyword-only
     env_file:
       - path: ./mcp-servers/akashx-documents/.env
         required: false
     environment:
       - MCP_AUDIT_LOG=${AKASHX_DOCS_AUDIT_LOG-/logs/mcp_audit.jsonl}
-      - AKASHX_HOST=${AKASHX_MCP_HOST:-130.131.192.234}
+      - AKASHX_HOST=${AKASHX_MCP_HOST:-}
       - AKASHX_PORT=${AKASHX_MCP_PORT:-9030}
       - AKASHX_USER=${AKASHX_MCP_USER:-root}
       - AKASHX_PASSWORD=${AKASHX_MCP_PASSWORD:-}
-      - AKASHX_DB=${AKASHX_MCP_DB:-financebench}
+      - AKASHX_DB=${AKASHX_MCP_DB:-}
+      # optional: only these databases are searched for RagBuckets (comma-separated)
+      - AKASHX_DOCS_DATABASES=${AKASHX_DOCS_DATABASES:-}
+      - SEMANTIC_MODEL_ID=${AKASHX_SEMANTIC_MODEL_ID:-}
+      - SEMANTIC_MODEL_DSN=${AKASHX_SEMANTIC_MODEL_DSN:-}
     volumes:
       - ./mcp-servers/akashx-documents/logs:/logs
-      # pages + search vectors per document, built on first read (seeded from Cognate's .cognate_corpus)
+      # pages + search vectors per document, built on first read
       - ./mcp-servers/akashx-documents/cache:/cache
     ports:
       - "8012:8000"

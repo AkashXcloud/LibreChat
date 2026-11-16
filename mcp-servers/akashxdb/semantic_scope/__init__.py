@@ -1,8 +1,9 @@
 """Semantic-model scope for the AkashX MCP server (the same model and rules Cognate uses).
 
 A semantic model is the list of tables, Ontology Views and RagBuckets an agent may use. It is
-stored by Superset/Cognate in Postgres (public.cognate_semantic_models) and selected per request
-with the X-Semantic-Model-Id header (set on the scoped MCP server entry in librechat.yaml).
+stored by Superset/Cognate in Postgres (public.cognate_semantic_models). It is optional: it is
+selected with SEMANTIC_MODEL_ID (or per request with the X-Semantic-Model-Id header), and without
+one the MCP server is not scoped (see ../audit_launcher.py).
 
 Vendored unchanged from cognate_backend_service (apart from import paths):
   semantic_model.py  <- cognate/assistant/context/semantic_model.py   (parse the stored DDL)
@@ -11,7 +12,7 @@ Vendored unchanged from cognate_backend_service (apart from import paths):
 render_data_layer / _entity_block / the AkashX connection rules are copied from
 cognate/agent/context.py, and _decode_schema_part / _merge_schema_text from cognate/api/helpers.py.
 
-  python -m semantic_scope render <id>   prints the prompt block for a model (used by setup_librechat.py)
+  python -m semantic_scope render <id>   prints the prompt block for a model
 """
 import dataclasses
 import json

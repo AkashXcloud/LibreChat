@@ -1,4 +1,4 @@
-"""Starts mcp-server-akashxdb with two additions for multi-user use and token benchmarks.
+"""Starts mcp-server-akashxdb (the AkashX MCP server, unchanged) with four additions for LibreChat.
 
 1. Concurrency: upstream tools are plain functions, which FastMCP 2.12 calls directly on the
    event loop, so one slow query (e.g. an ASK) blocks every other client. Here each sync tool
@@ -7,20 +7,30 @@
 2. Audit log (only when MCP_AUDIT_LOG is set): each `tools/call` is appended as one JSON line
    with the LibreChat run's message id (X-LibreChat-Message-Id header, set in librechat.yaml),
    tool name, arguments, time to result and the raw result.
-3. Semantic-model scope (only for requests carrying X-Semantic-Model-Id, i.e. the
-   mcp-akashxdb-scoped entry in librechat.yaml): the model is loaded from Cognate's
-   public.cognate_semantic_models (SEMANTIC_MODEL_DSN) and every query must stay inside it —
-   Cognate's SemanticGuard, plus SELECT/WITH/ASK only. db_summary returns the semantic model
-   instead of the whole database; tools that are not read-only queries are refused. A model that
-   cannot be loaded refuses everything (fail-closed, as in Cognate).
+3. Optional semantic-model scope. With no semantic model (the default) the agent can use the whole
+   database. When SEMANTIC_MODEL_ID is set (or a request carries the X-Semantic-Model-Id header),
+   the model is loaded from public.cognate_semantic_models (SEMANTIC_MODEL_DSN) and every query
+   must stay inside it: Cognate's SemanticGuard, plus SELECT/WITH/ASK only. db_summary then
+   returns the semantic model instead of the database. A configured model that cannot be loaded
+   refuses every call (fail-closed), so a configured restriction is never silently dropped.
+4. Server instructions for a general database assistant, sent in the MCP initialize response.
+   (LibreChat does not pass on instructions from servers with per-request headers, so
+   librechat.yaml carries the same guidance as text in `serverInstructions`.)
+
+An empty STARROCKS_DB means no default database; an empty STARROCKS_HOST (and no STARROCKS_URL)
+means the connection is not configured, and tool calls say so instead of failing at startup.
 
   python audit_launcher.py --mode streamable-http --host 0.0.0.0 --port 8000
 """
+import os
+
+if not os.getenv("STARROCKS_DB", "").strip():   # an empty value would select database ''
+    os.environ.pop("STARROCKS_DB", None)
+
 import asyncio
 import functools
 import inspect
 import json
-import os
 import time
 
 import anyio
@@ -40,6 +50,29 @@ except Exception:  # the guard itself refuses SQL it cannot verify
 
 LOG = os.getenv("MCP_AUDIT_LOG")
 SCOPE_HEADER = "x-semantic-model-id"
+DEFAULT_MODEL = os.getenv("SEMANTIC_MODEL_ID", "").strip()
+CONFIGURED = bool(os.getenv("STARROCKS_HOST", "").strip() or os.getenv("STARROCKS_URL", "").strip())
+
+INSTRUCTIONS = """AkashX database tools. You help people, including people who do not know SQL, get answers and insights from their data.
+
+How to work:
+1. Find the data. read_query("SHOW DATABASES") lists the databases; db_summary(db=...) lists a database's tables with their columns and sizes; table_overview(table="database.table") shows columns, sample rows and the row count. Look before you query; never guess table or column names. Skip system databases (information_schema, sys, _statistics_) unless asked about them.
+2. Query. Write read-only SELECT (or WITH) queries with `database.table` names. Aggregate in SQL (COUNT, SUM, AVG, GROUP BY) instead of fetching raw rows, and add LIMIT when listing rows. AkashX SQL is MySQL-compatible: backtick identifiers, LIMIT n, date_trunc, date_format, ifnull.
+3. Answer. Start with the answer in plain language, then the key numbers (a small table when it helps), and say which tables you used. State any assumption you made; if the question is ambiguous, ask.
+
+AkashX features:
+- Ontology Views are views built from documents: one row per document with fields extracted from it.
+- RagBuckets are document collections. `ASK '<question>' ON <bucket>` (through read_query) answers from a bucket's documents; it is slower, so use it when tables and views do not have the answer.
+
+Do not change data or objects (write_query, DDL or DML) unless the user explicitly asks for it."""
+if DEFAULT_MODEL:
+    INSTRUCTIONS = ("This connection is limited to one semantic model. Call db_summary first: it lists exactly "
+                    "the tables, Ontology Views and RagBuckets you may use, and anything else is refused. Only "
+                    "SELECT, WITH and ASK queries run.\n\n" + INSTRUCTIONS)
+try:
+    server.mcp._mcp_server.instructions = INSTRUCTIONS
+except AttributeError:   # a FastMCP without the low-level server attribute; tools still work
+    pass
 
 
 def _refusal(text: str) -> ToolResult:
@@ -50,6 +83,10 @@ def _scope_error(scope: "semantic_scope.Scope", tool: str, args: dict):
     """None when the call is inside the semantic model, else the refusal (or db_summary's answer)."""
     allowed = scope.guard.allowed_names()
     if tool == "db_summary":
+        db = str(args.get("db") or "").strip("`").lower()
+        if db and db not in scope.databases:
+            return _refusal(f"database '{args.get('db')}' is not in the semantic model. Call db_summary with no "
+                            f"arguments to see what you may use: {allowed}")
         return ToolResult(content=[TextContent(type="text", text=scope.render())])
     if tool == "table_overview":
         msg = scope.guard.check(f"SELECT * FROM {args.get('table') or ''}")
@@ -81,7 +118,9 @@ def _wrap(name, fn):
 
     @functools.wraps(fn)
     async def run(*args, **kwargs):
-        model_id = (get_http_headers() or {}).get(SCOPE_HEADER)
+        if not CONFIGURED:
+            return reply(_refusal("the AkashX connection is not configured (set AKASHX_MCP_HOST in .env)."))
+        model_id = ((get_http_headers() or {}).get(SCOPE_HEADER) or DEFAULT_MODEL).strip()
         if model_id:
             try:
                 scope = await anyio.to_thread.run_sync(semantic_scope.load_scope, model_id, server.db_client)
@@ -147,7 +186,7 @@ class AuditMiddleware:
             params = req.get("params") or {}
             rec = {"ts": started, "secs": round((done[0] if done else time.time()) - started, 3),
                    "message_id": headers.get("x-librechat-message-id"),
-                   "semantic_model_id": headers.get(SCOPE_HEADER),
+                   "semantic_model_id": (headers.get(SCOPE_HEADER) or DEFAULT_MODEL) or None,
                    "tool": params.get("name"), "arguments": params.get("arguments"),
                    "result": b"".join(out).decode("utf-8", "replace")[:50000]}
             with open(LOG, "a", encoding="utf-8") as fh:
