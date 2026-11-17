@@ -14,12 +14,136 @@ fileConfig:
       - '^image/png$'
       - '^image/jpeg$'
       - '^image/jpg$'
+      - '^application/vnd\.openxmlformats-officedocument\.presentationml\.presentation$'
   text:
     supportedMimeTypes:
       - '^application/pdf$'
       - '^text/.*$'
       - '^application/x-ocr-document$'
+      - '^application/json$'
+webSearch:
+  searchProvider: tavily
+  scraperProvider: tavily
 interface:
+  theme:
+    version: 1
+    name: akashx-purple-blue
+
+    modes:
+      light:
+        colors:
+          # Backgrounds
+          rgb-surface-primary: '255 255 255'
+          rgb-surface-primary-alt: '248 249 255'
+          rgb-surface-canvas: '247 248 252'
+          rgb-surface-secondary: '248 249 255'
+          rgb-surface-tertiary: '240 243 252'
+          rgb-surface-dialog: '255 255 255'
+          rgb-surface-chat: '255 255 255'
+          rgb-surface-composer: '248 249 255'
+
+          # Interactive surfaces
+          rgb-surface-hover: '240 243 252'
+          rgb-surface-hover-alt: '235 237 250'
+          rgb-surface-active: '235 230 255'
+          rgb-surface-active-alt: '226 218 255'
+
+          # Primary Purple
+          rgb-accent-primary: '109 77 255'
+          rgb-accent-primary-hover: '98 67 240'
+
+          # Buttons
+          rgb-surface-submit: '117 87 255'
+          rgb-surface-submit-hover: '98 67 240'
+
+          # Focus and links
+          rgb-ring-primary: '117 87 255'
+          rgb-link: '98 67 240'
+
+          # Text
+          rgb-text-primary: '8 12 38'
+          rgb-text-secondary: '67 87 117'
+          rgb-text-tertiary: '97 126 168'
+
+          # Borders
+          rgb-border-light: '222 227 240'
+          rgb-border-medium: '190 199 220'
+
+          # Status colors
+          rgb-status-success: '12 172 119'
+          rgb-status-error: '223 67 67'
+          rgb-status-warning: '254 130 61'
+
+        appearance:
+          controlRadius: '0.75rem'
+          surfaceRadius: '1rem'
+          largeSurfaceRadius: '1.5rem'
+          menuRadius: '0.75rem'
+          buttonHeight: '2.5rem'
+          fieldHeight: '2.5rem'
+          fontFamily: 'Inter, sans-serif'
+          displayFontFamily: 'Inter, sans-serif'
+
+      dark:
+        colors:
+          # Backgrounds
+          rgb-surface-primary: '8 13 38'
+          rgb-surface-secondary: '13 21 51'
+          rgb-surface-tertiary: '21 36 72'
+          rgb-surface-dialog: '16 26 58'
+          rgb-surface-canvas: '8 13 38'
+          rgb-surface-primary-alt: '8 13 38'
+          rgb-surface-composer: '13 21 51'
+          rgb-presentation: '21 36 72'
+          # --surface-chat: '13 21 51'
+          rgb-surface-chat: '13 21 51'
+          # --surface-hover: '21 36 72'
+          surface-hover: '21 36 72'
+          surface-hover-alt: '21 36 72'
+          surface-chat: '13 21 51'
+
+          rgb-surface-active: '29 36 75'
+          rgb-surface-active-alt: '21 36 72'
+
+          rgb-surface-hover: '21 36 72'
+          rgb-surface-hover-alt: '29 36 75'
+
+          # Primary Purple
+          rgb-accent-primary: '151 128 255'
+          rgb-accent-primary-hover: '129 102 255'
+
+          # Buttons
+          rgb-surface-submit: '117 87 255'
+          rgb-surface-submit-hover: '98 67 240'
+
+          # Focus and links
+          rgb-ring-primary: '151 128 255'
+          rgb-link: '151 128 255'
+
+          # Text
+          rgb-text-primary: '244 248 255'
+          rgb-text-secondary: '205 218 237'
+          rgb-text-tertiary: '142 161 189'
+
+          # Borders
+          rgb-border-light: '35 49 91'
+          rgb-border-medium: '57 76 125'
+
+          # Status colors
+          rgb-status-success: '102 242 195'
+          rgb-status-error: '223 67 67'
+          rgb-status-warning: '255 183 3'
+
+        appearance:
+          controlRadius: '0.75rem'
+          surfaceRadius: '1rem'
+          largeSurfaceRadius: '1.5rem'
+          menuRadius: '0.75rem'
+          buttonHeight: '2.5rem'
+          fieldHeight: '2.5rem'
+          fontFamily: 'Inter, sans-serif'
+          displayFontFamily: 'Inter, sans-serif'
+
   contextUsage: true
   contextCost: true
   customWelcome: Welcome to AkashX! Enjoy your experience.
@@ -157,20 +281,29 @@ mcpSettings:
   - akashx-knowledge
   - akashx-documents
 mcpServers:
+  # you can use the local akashxdb-mcp container from docker-compose.override.yml for testing, or the staging server at mcp-server.tesla-stg.azure.akashx.ai/mcp.
+  # The staging server returns 502 errors, so the local container is preferred for development.
+  # mcp-akashxdb:
+  #   type: streamable-http
+  #   # Staging (https://mcp-server.tesla-stg.azure.akashx.ai/mcp) returns 502;
+  #   # using the local akashxdb-mcp container from docker-compose.override.yml.
+  #   url: http://akashxdb-mcp:8000/mcp
+  #   # ties each tool call to its agent run (the run's messageId) in the MCP audit log
+  #   headers:
+  #     X-LibreChat-Message-Id: '{{LIBRECHAT_BODY_MESSAGEID}}'
+  #   requiresOAuth: false
+  #   timeout: 300000
+  #   initTimeout: 150000
   mcp-akashxdb:
     type: streamable-http
-    # AkashX database tools: the local akashxdb-mcp container (needs COMPOSE_PROFILES=local-db-mcp in
-    # .env), or a remote AkashX MCP server: put its URL here and its host in
-    # mcpSettings.allowedDomains above. Write the URL itself, not a ${VARIABLE}: LibreChat checks the
-    # allowed domains before it resolves variables. With the local container the whole database is
-    # available unless AKASHX_SEMANTIC_MODEL_ID is set in .env.
-    url: http://akashxdb-mcp:8000/mcp
-    # ties each tool call to its agent run (the run's messageId) in the MCP audit log
-    headers:
-      X-LibreChat-Message-Id: '{{LIBRECHAT_BODY_MESSAGEID}}'
-    # added to the context of agents that use these tools (written here because LibreChat does not
-    # share instructions fetched from servers with per-request headers such as the message id)
-    serverInstructions: |
+    # AkashX database tools on a remote AkashX MCP server (here: Tesla staging); its host must be
+    # in mcpSettings.allowedDomains. For the local akashxdb-mcp container instead, set the url to
+    # http://akashxdb-mcp:8000/mcp and COMPOSE_PROFILES=local-db-mcp in .env. Write the URL itself,
+    # not a ${VARIABLE}: LibreChat checks allowedDomains before it resolves variables.
+    url: https://mcp-server.tesla-stg.azure.akashx.ai/mcp
+    # no per-request headers, so LibreChat keeps one shared connection (refresh and status indicators)
+    # added to the context of agents that use these tools, whichever server the url points to
+    serverInstructions: |
       AkashX database tools. Help people, including people who do not know SQL, get answers and insights from their data.
       - Find the data before querying: read_query("SHOW DATABASES"), then db_summary(db=...) for a database's tables, then table_overview(table="database.table") for columns, sample rows and row count. Never guess table or column names; skip system databases (information_schema, sys, _statistics_).
       - If SHOW DATABASES is refused, a semantic model is active: call db_summary with no arguments to see exactly which tables, Ontology Views and RagBuckets you may use.

@@ -16,6 +16,7 @@ const {
   isTwoFactorEnrollmentRequired,
 } = require('@librechat/api');
 const { getUserById } = require('~/models');
+const { isPortalSessionStale } = require('~/strategies/portalSession');
 
 const hasPassportStrategy = (strategy) =>
   typeof passport._strategy === 'function' && passport._strategy(strategy) != null;
@@ -196,6 +197,14 @@ const requireJwtAuth = (req, res, next) => {
         }
         logAuthenticationFailure({ strategy, info, status: 401, err });
         return res.status(401).json({ message: 'Unauthorized' });
+      }
+      /** Browser sessions only (they carry `refreshToken`); the 401 sends the client
+       * through refresh, which `checkPortalSession` rejects, and back to login */
+      if (req.cookies?.refreshToken && isPortalSessionStale(req, user)) {
+        logger.info(
+          `[requireJwtAuth] Portal session ended or changed user: userId=${getAuthenticatedUserId(user)}`,
+        );
+        return res.status(401).json({ message: 'Portal session ended' });
       }
       req.user = user;
       req.authStrategy = strategy;

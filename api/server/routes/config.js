@@ -101,6 +101,7 @@ function buildPreLoginPayload() {
     openidLabel: process.env.OPENID_BUTTON_LABEL || 'Continue with OpenID',
     openidImageUrl: process.env.OPENID_IMAGE_URL,
     openidAutoRedirect: isEnabled(process.env.OPENID_AUTO_REDIRECT),
+    portalLoginEnabled: !!process.env.PORTAL_JWT_SECRET,
     samlLoginEnabled: !isOpenIdEnabled && isSamlEnabled,
     samlLabel: process.env.SAML_BUTTON_LABEL,
     samlImageUrl: process.env.SAML_IMAGE_URL,

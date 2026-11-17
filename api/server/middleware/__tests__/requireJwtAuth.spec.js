@@ -1077,3 +1077,61 @@ describe('requireRumProxyAuth', () => {
     expect(res.end).toHaveBeenCalled();
   });
 });
+
+describe('requireJwtAuth portal session', () => {
+  const PORTAL_SECRET = 'portal-secret';
+  const portalUser = { _id: 'user-1', provider: 'portal', email: 'user1@akashx.ai' };
+  const portalCookie = (email) => jwt.sign({ email, aud: 'akashx' }, PORTAL_SECRET);
+
+  /** Resolves 'next' when the request is let through, or the 401 body when it is rejected */
+  function run(user, cookies) {
+    return new Promise((resolve) => {
+      const req = mockReq(user, { cookies });
+      const res = mockRes();
+      res.json.mockImplementation((body) =>
+        resolve({ status: res.status.mock.calls[0]?.[0], body }),
+      );
+      requireJwtAuth(req, res, () => resolve('next'));
+    });
+  }
+
+  beforeEach(() => {
+    process.env.PORTAL_JWT_SECRET = PORTAL_SECRET;
+  });
+
+  afterEach(() => {
+    delete process.env.PORTAL_JWT_SECRET;
+  });
+
+  it('lets a browser request through while the portal cookie is for the same user', async () => {
+    const result = await run(portalUser, {
+      refreshToken: 'rt',
+      _token: portalCookie('User1@akashx.ai'),
+    });
+    expect(result).toBe('next');
+  });
+
+  it.each([
+    ['logged out of the portal (no _token)', {}],
+    ['logged in to the portal as another user', { _token: portalCookie('user2@akashx.ai') }],
+    ['invalid portal cookie', { _token: 'not-a-token' }],
+  ])('rejects a browser request when %s', async (_name, portalCookies) => {
+    const result = await run(portalUser, { refreshToken: 'rt', ...portalCookies });
+    expect(result).toEqual({ status: 401, body: { message: 'Portal session ended' } });
+  });
+
+  it('does not affect bearer-only callers (no refreshToken cookie), e.g. the agent trigger host', async () => {
+    expect(await run(portalUser, {})).toBe('next');
+    expect(await run(portalUser, undefined)).toBe('next');
+  });
+
+  it('does not affect users from other providers', async () => {
+    const result = await run({ ...portalUser, provider: 'local' }, { refreshToken: 'rt' });
+    expect(result).toBe('next');
+  });
+
+  it('does nothing when portal login is not configured', async () => {
+    delete process.env.PORTAL_JWT_SECRET;
+    expect(await run(portalUser, { refreshToken: 'rt' })).toBe('next');
+  });
+});

@@ -72,6 +72,7 @@ jest.mock('~/server/middleware', () => {
   const pass = (req, res, next) => next();
   return {
     logHeaders: pass,
+    checkPortalSession: pass,
     requireSameOrigin: jest.requireActual('~/server/middleware/requireSameOrigin'),
     loginLimiter: (...args) => mockLoginLimiter(...args),
     passkeyLimiter: pass,

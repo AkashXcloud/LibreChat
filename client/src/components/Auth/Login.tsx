@@ -77,6 +77,15 @@ function Login() {
     startupConfig?.serverDomain &&
     !isAutoRedirectDisabled;
 
+  const shouldPortalRedirect =
+    startupConfig?.portalLoginEnabled && startupConfig?.serverDomain && !isAutoRedirectDisabled;
+
+  useEffect(() => {
+    if (shouldPortalRedirect) {
+      window.location.href = `${startupConfig.serverDomain}/oauth/portal`;
+    }
+  }, [shouldPortalRedirect, startupConfig]);
+
   useEffect(() => {
     if (shouldAutoRedirect) {
       console.log('Auto-redirecting to OpenID provider...');

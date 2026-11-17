@@ -49,6 +49,16 @@ librechat:
     # Set Config Params here
     # ENV_NAME: env-value
 
+    # AkashX Portal login (AkashX fork only; see "AkashX Portal" in .env.example).
+    # Also add PORTAL_JWT_SECRET (the portal's AUTH_TOKEN_SECRET) to existingSecretName.
+    # ALLOW_EMAIL_LOGIN: "false"
+    # ALLOW_REGISTRATION: "false"
+    # ALLOW_SOCIAL_LOGIN: "true"
+    # ALLOW_SOCIAL_REGISTRATION: "true"
+    # PORTAL_LOGIN_URL: "https://client-portal.example.com/login"
+    # PORTAL_LOGOUT_URL: "https://client-portal.example.com/logout"
+    # REFRESH_TOKEN_EXPIRY: "86400000"
+
     # existing Secret for all envs/ only Passwords. Can be locally generated with: kubectl create secret generic librechat-secret-envs --from-env-file=.env.example --dry-run=client -o yaml > secret-envs.yaml
     # For better maintainabillity, you can put all vars directly in the config Section and only overwrite Secrets with this if nessesary.
     # Required Values:

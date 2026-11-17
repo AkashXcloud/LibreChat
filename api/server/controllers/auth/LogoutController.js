@@ -176,6 +176,9 @@ const logoutController = async (req, res) => {
         }
       }
     }
+    if (req.user?.provider === 'portal' && process.env.PORTAL_LOGOUT_URL) {
+      response.redirect = process.env.PORTAL_LOGOUT_URL;
+    }
     return res.status(status).send(response);
   } catch (err) {
     logger.error('[logoutController]', err);
