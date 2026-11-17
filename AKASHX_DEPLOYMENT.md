@@ -81,6 +81,14 @@ OpenAI key for the chat model. Set it here so users are not asked for their own 
 OPENAI_API_KEY=<openai key>
 ```
 
+Public address of the file downloads (`fileagent`, port 8001). Links to files the agent creates
+(Word, PowerPoint, Excel, PDF) use it, so it must be reachable from users' browsers; the default
+`http://localhost:8001` only works on the LibreChat host itself:
+
+```bash
+FILEAGENT_PUBLIC_URL=https://<public host for fileagent downloads>
+```
+
 AkashX section:
 
 ```bash
@@ -187,13 +195,17 @@ docker ps --format "table {{.Names}}\t{{.Status}}"
 must not be listed.
 
 If the build stops with "additional privileges requested: pass --allow=fs.read=Dockerfile", build
-the images directly and start without building:
+the images directly and start without building. Compose names the `fileagent`, `akashx-documents`
+and `akashx-knowledge` images `<project>-<service>`, where `<project>` is the folder name of the
+repo (or `COMPOSE_PROJECT_NAME`), so tag them with the same project name; check it with
+`docker compose config | head -1`:
 
 ```bash
+P=librechat          # the Compose project name, e.g. librechat-sso in a folder named librechat-sso
 docker build -t librechat-dev:cap06 -f Dockerfile .
-docker build -t librechat-fileagent mcp-servers/fileagent
-docker build -t librechat-akashx-documents mcp-servers/akashx-documents
-docker build -t librechat-akashx-knowledge mcp-servers/akashx-knowledge
+docker build -t $P-fileagent mcp-servers/fileagent
+docker build -t $P-akashx-documents mcp-servers/akashx-documents
+docker build -t $P-akashx-knowledge mcp-servers/akashx-knowledge
 docker compose up -d --no-build
 ```
 
@@ -237,6 +249,19 @@ Agents are stored in MongoDB, not in git.
 6. Test in a new chat: "What data do we have in AkashX?" and "Which document collections are
    there?".
 
+## Unit tests
+
+The AkashX servers have unit tests that need no AkashX server, Postgres or OpenAI key (Python 3.12
+or 3.13):
+
+```bash
+pip install pytest "fastmcp==2.12.5" "pydantic>=2.11,<2.12" numpy openai mysql-connector-python \
+  "psycopg[binary]>=3.2,<4" "sqlglot==27.15.2" <path to mcp-server-akashxdb>
+(cd mcp-servers/akashx-documents && python -m pytest tests -q)   # document tools
+(cd mcp-servers/akashxdb && python -m pytest tests -q)           # database MCP wrapper and scope
+python -m pytest mcp-servers/tests -q                            # no hard-coded data sources
+```
+
 ## Troubleshooting
 
 | Symptom | Cause and fix |
@@ -247,6 +272,8 @@ Agents are stored in MongoDB, not in git.
 | Document tools answer with a connection error | The AkashX database port is not reachable, or the user or password is wrong |
 | The agent sees fewer databases than expected | The remote MCP server's database user only has access to those databases |
 | Users are asked for an OpenAI key | `OPENAI_API_KEY=user_provided` in `.env` |
+| Download links of generated files do not open | `FILEAGENT_PUBLIC_URL` is not the public address of `fileagent` |
+| `--no-build` start uses old AkashX images | The images were tagged with another project name than Compose's (section 4) |
 | A rebuild fails with "Directory '.' is not installable" | `COMPOSE_PROFILES=local-db-mcp` is set; clear it for a remote MCP server |
 | Database and document answers disagree | The document tools (`AKASHX_MCP_HOST`) read a different AkashX server than the MCP server; point both at the same one |
 | `"portalLoginEnabled":false` | `PORTAL_JWT_SECRET` is not set, or `ALLOW_SOCIAL_LOGIN` is not `true` |
