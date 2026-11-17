@@ -48,7 +48,13 @@ nc -zv <akashx-db-host> <akashx-db-port>      # expect "succeeded"
 
 ## 2. Configuration
 
-### `.env` (create from `.env.example`; never commit it)
+### `.env` (create from `.env.example`)
+
+The `.env` committed in the repo is the team's local development setup, not a production
+configuration: portal sign-in against a local portal (`localhost:9000`, with the development
+portal secret), the local `akashxdb-mcp` container (`COMPOSE_PROFILES=local-db-mcp`) on the AkashX
+development server, and the local Superset for the optional semantic model. For production,
+start from `.env.example` instead and keep the production values out of git:
 
 ```bash
 cp .env.example .env
