@@ -76,7 +76,7 @@ COMPOSE_PROFILES=
 
 # the AkashX database, for the document tools (a read-only user is recommended). It must be the
 # same AkashX server the MCP server uses, or database and document answers come from different
-# data. For the Tesla staging MCP that is host 9.234.125.87, port 3333.
+# data.
 AKASHX_MCP_HOST=<akashx-db-host>
 AKASHX_MCP_PORT=<akashx-db-port>
 AKASHX_MCP_USER=<user>
@@ -98,11 +98,8 @@ Other tools, if used: `TAVILY_API_KEY` (web search), `FIRECRAWL_API_KEY` (Firecr
 
 ### `librechat.yaml`
 
-`mcp-akashxdb` already points to the Tesla staging MCP server
-(`https://mcp-server.tesla-stg.azure.akashx.ai/mcp`), and that host is already in
-`mcpSettings.allowedDomains`. For staging, no edit is needed.
-
-For another AkashX MCP server, make two edits: set the URL of `mcp-akashxdb`, and add its host
+Point `mcp-akashxdb` at the AkashX MCP server of this deployment. Check its URL, and if it is
+another server, make two edits: set the URL of `mcp-akashxdb`, and add its host
 (host name or IP only, no `https://` or port) to `mcpSettings.allowedDomains`; LibreChat refuses
 MCP connections to hosts not listed there:
 
@@ -189,9 +186,8 @@ docker compose up -d --no-build
 
 ## 5. Check
 
-Tested setup: LibreChat with the Tesla staging AkashX MCP
-(`https://mcp-server.tesla-stg.azure.akashx.ai/mcp`) and its database for the document tools,
-with no local MCP container. All three tool groups answered correctly.
+Tested setup: LibreChat with a remote AkashX MCP server and the same AkashX server's database for
+the document tools, with no local MCP container. All three tool groups answered correctly.
 
 With portal sign-in configured:
 

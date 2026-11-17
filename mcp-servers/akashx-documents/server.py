@@ -72,6 +72,9 @@ class NotConfigured(RuntimeError):
 # ---- AkashX connection (opened on first use) -----------------------------------------------
 _pool: Optional[mysql.connector.pooling.MySQLConnectionPool] = None
 _pool_lock = threading.Lock()
+POOL_SIZE = int(os.getenv("AKASHX_DOCS_POOL_SIZE", "8"))
+# mysql-connector's pool raises "pool exhausted" instead of waiting, so callers queue here first
+_pool_slots = threading.BoundedSemaphore(POOL_SIZE)
 
 
 def _get_pool() -> mysql.connector.pooling.MySQLConnectionPool:
@@ -82,7 +85,7 @@ def _get_pool() -> mysql.connector.pooling.MySQLConnectionPool:
             if not host:
                 raise NotConfigured("the AkashX connection is not configured (set AKASHX_MCP_HOST in .env).")
             params: dict[str, Any] = dict(
-                pool_name="docs", pool_size=int(os.getenv("AKASHX_DOCS_POOL_SIZE", "4")), host=host,
+                pool_name="docs", pool_size=POOL_SIZE, host=host,
                 port=int(os.getenv("AKASHX_PORT", "9030") or 9030), user=os.getenv("AKASHX_USER", "root") or "root",
                 password=os.getenv("AKASHX_PASSWORD", ""), autocommit=True,
                 connection_timeout=int(os.getenv("AKASHX_CONNECT_TIMEOUT", "10")))
@@ -94,13 +97,15 @@ def _get_pool() -> mysql.connector.pooling.MySQLConnectionPool:
 
 
 def fetch_rows(sql: str, params: Optional[dict] = None) -> list[dict]:
-    conn = _get_pool().get_connection()
-    try:
-        cur = conn.cursor(dictionary=True)
-        cur.execute(sql, params or ())
-        return cur.fetchall()
-    finally:
-        conn.close()
+    pool = _get_pool()
+    with _pool_slots:   # wait for a free connection rather than fail when all are in use
+        conn = pool.get_connection()
+        try:
+            cur = conn.cursor(dictionary=True)
+            cur.execute(sql, params or ())
+            return cur.fetchall()
+        finally:
+            conn.close()
 
 
 class _Embedder:
