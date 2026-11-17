@@ -101,7 +101,7 @@ AKASHX_DOCS_DATABASES=
 
 # leave empty: the assistant uses the whole database
 AKASHX_SEMANTIC_MODEL_ID=
-AKASHX_SEMANTIC_MODEL_DSN=
+AKASHX_SEMANTIC_MODEL_DATA_SOURCE_NAME=
 ```
 
 The optional semantic-model limit is applied by this repo's local MCP wrapper and by the document

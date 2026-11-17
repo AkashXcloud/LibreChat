@@ -324,7 +324,7 @@ services:
   # this repo).
   # The AkashX server it connects to is set with AKASHX_MCP_HOST/PORT/USER/PASSWORD (and optional
   # AKASHX_MCP_DB, the default database). Without a semantic model the agent can use the whole
-  # server; set AKASHX_SEMANTIC_MODEL_ID (+ AKASHX_SEMANTIC_MODEL_DSN) to limit it to one model.
+  # server; set AKASHX_SEMANTIC_MODEL_ID (+ AKASHX_SEMANTIC_MODEL_DATA_SOURCE_NAME) to limit it to one model.
   akashxdb-mcp:
     container_name: akashxdb-mcp
     profiles: ["local-db-mcp"]
@@ -355,7 +355,7 @@ services:
       - STARROCKS_DB=${AKASHX_MCP_DB:-}
       - STARROCKS_POOL_SIZE=${AKASHX_MCP_POOL_SIZE:-16}
       - SEMANTIC_MODEL_ID=${AKASHX_SEMANTIC_MODEL_ID:-}
-      - SEMANTIC_MODEL_DSN=${AKASHX_SEMANTIC_MODEL_DSN:-}
+      - SEMANTIC_MODEL_DSN=${AKASHX_SEMANTIC_MODEL_DATA_SOURCE_NAME:-}
     ports:
       - "8010:8000"
     healthcheck:
@@ -422,7 +422,7 @@ services:
       # optional: only these databases are searched for RagBuckets (comma-separated)
       - AKASHX_DOCS_DATABASES=${AKASHX_DOCS_DATABASES:-}
       - SEMANTIC_MODEL_ID=${AKASHX_SEMANTIC_MODEL_ID:-}
-      - SEMANTIC_MODEL_DSN=${AKASHX_SEMANTIC_MODEL_DSN:-}
+      - SEMANTIC_MODEL_DSN=${AKASHX_SEMANTIC_MODEL_DATA_SOURCE_NAME:-}
     volumes:
       - ./mcp-servers/akashx-documents/logs:/logs
       # pages + search vectors per document, built on first read
