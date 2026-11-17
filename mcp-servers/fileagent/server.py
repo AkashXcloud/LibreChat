@@ -213,14 +213,17 @@ async def _send_artifact(request: Request) -> FileResponse | PlainTextResponse:
 async def download_file(request: Request) -> FileResponse | PlainTextResponse:
     return await _send_artifact(request)
 
+async def healthz(request: Request) -> PlainTextResponse:
+    return PlainTextResponse("Ok", status_code=200)
+
 
 download_app = Starlette(
     routes=[
+        Route("/healthz", healthz, methods=["GET"]),
         Route("/tmp/fileagent/{filename}", _send_artifact, methods=["GET"]),
         Route("/files/{filename}", download_file, methods=["GET"]),
     ]
 )
-
 
 @mcp.tool()
 def create_presentation(title: str = "Presentation") -> str:
