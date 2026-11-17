@@ -3,6 +3,10 @@
 This deploys LibreChat with the AkashX tools against an AkashX database server that already runs
 its own AkashX MCP server. Nothing is installed or changed on the AkashX server.
 
+This branch also contains the AkashX portal sign-in (section 3) and the AkashX light and dark
+themes. Both are in the LibreChat image, so the image must be built from this branch (section 4);
+the official LibreChat image does not contain them.
+
 ## What runs
 
 | Container | Purpose | Talks to |
@@ -70,7 +74,9 @@ AkashX section:
 # remote AkashX MCP server: no local MCP container (its URL goes in librechat.yaml, below)
 COMPOSE_PROFILES=
 
-# the AkashX database, for the document tools (a read-only user is recommended)
+# the AkashX database, for the document tools (a read-only user is recommended). It must be the
+# same AkashX server the MCP server uses, or database and document answers come from different
+# data. For the Tesla staging MCP that is host 9.234.125.87, port 3333.
 AKASHX_MCP_HOST=<akashx-db-host>
 AKASHX_MCP_PORT=<akashx-db-port>
 AKASHX_MCP_USER=<user>
@@ -85,13 +91,20 @@ AKASHX_SEMANTIC_MODEL_ID=
 AKASHX_SEMANTIC_MODEL_DSN=
 ```
 
+The optional semantic-model limit is applied by this repo's local MCP wrapper and by the document
+tools. With a remote MCP server it limits only the document tools, so leave it empty.
+
 Other tools, if used: `TAVILY_API_KEY` (web search), `FIRECRAWL_API_KEY` (Firecrawl), `OCR_API_KEY`.
 
 ### `librechat.yaml`
 
-Two edits. Set the URL of `mcp-akashxdb` to the remote MCP server, and add its host (host name
-or IP only, no `https://` or port) to `mcpSettings.allowedDomains`; LibreChat refuses MCP
-connections to hosts not listed there:
+`mcp-akashxdb` already points to the Tesla staging MCP server
+(`https://mcp-server.tesla-stg.azure.akashx.ai/mcp`), and that host is already in
+`mcpSettings.allowedDomains`. For staging, no edit is needed.
+
+For another AkashX MCP server, make two edits: set the URL of `mcp-akashxdb`, and add its host
+(host name or IP only, no `https://` or port) to `mcpSettings.allowedDomains`; LibreChat refuses
+MCP connections to hosts not listed there:
 
 ```yaml
 mcpSettings:
@@ -111,6 +124,10 @@ mcpServers:
 Write the URL itself, not a `${VARIABLE}`: LibreChat checks the allowed domains before it
 resolves variables, so a variable there is rejected (`Domain "unknown" is not allowed`).
 
+`mcp-akashxdb` sends no per-request headers, so LibreChat keeps one shared connection to it and
+its refresh and status indicators work. Database tool calls are then logged only by the remote
+MCP server, if it logs them.
+
 ### OpenAI key for the AkashX tool servers (not in git)
 
 ```bash
@@ -120,7 +137,36 @@ printf 'OPENAI_API_KEY=<openai key>\n' > mcp-servers/akashx-knowledge/.env
 
 Without it, document and product-doc search fall back to keyword search.
 
-## 3. Build and start
+## 3. AkashX portal sign-in (optional)
+
+Users who are logged in to the AkashX client portal are signed in to LibreChat automatically
+through the portal's `_token` cookie. It is off until `PORTAL_JWT_SECRET` is set; without it,
+LibreChat uses its normal email login.
+
+Requirements and full steps (Kubernetes secret, Helm values, checks): `helm/librechat/AKASHX-PORTAL-LOGIN.md`.
+In short:
+
+- LibreChat must be served on a host under the portal's cookie domain, or the browser never
+  sends `_token`.
+- `.env` (or the Kubernetes secret and Helm `configEnv`):
+
+```bash
+PORTAL_JWT_SECRET=<the portal's AUTH_TOKEN_SECRET>   # secret; from the portal team
+ALLOW_SOCIAL_LOGIN=true
+ALLOW_SOCIAL_REGISTRATION=true                       # first portal visit creates the user
+PORTAL_LOGIN_URL=https://<client-portal-host>/login
+PORTAL_LOGOUT_URL=https://<client-portal-host>/logout
+REFRESH_TOKEN_EXPIRY=86400000                        # 24 h, same as the portal cookie
+# portal-only login:
+ALLOW_EMAIL_LOGIN=false
+ALLOW_REGISTRATION=false
+```
+
+- New portal users get the `USER` role. The admin who creates and shares the assistant agent
+  (section 6) needs the `ADMIN` role, set once in MongoDB:
+  `db.users.updateOne({email: "<email>"}, {$set: {role: "ADMIN"}})`
+
+## 4. Build and start
 
 ```bash
 docker compose up -d --build
@@ -141,11 +187,17 @@ docker build -t librechat-akashx-knowledge mcp-servers/akashx-knowledge
 docker compose up -d --no-build
 ```
 
-## 4. Check
+## 5. Check
 
 Tested setup: LibreChat with the Tesla staging AkashX MCP
 (`https://mcp-server.tesla-stg.azure.akashx.ai/mcp`) and its database for the document tools,
 with no local MCP container. All three tool groups answered correctly.
+
+With portal sign-in configured:
+
+```bash
+curl -s https://<librechat-host>/api/config | grep -o '"portalLoginEnabled":[a-z]*'   # true
+```
 
 ```bash
 docker logs LibreChat 2>&1 | grep -E "Server listening|mcp-akashx"
@@ -160,7 +212,7 @@ docker logs akashx-documents 2>&1 | grep -E "document lists loaded|warm-up skipp
 The MCP connections open when a user first uses the tools, so "Tools: undefined" at startup is
 normal.
 
-## 5. Create the assistant agent (once)
+## 6. Create the assistant agent (once)
 
 Agents are stored in MongoDB, not in git.
 
@@ -188,5 +240,9 @@ Agents are stored in MongoDB, not in git.
 | The agent sees fewer databases than expected | The remote MCP server's database user only has access to those databases |
 | Users are asked for an OpenAI key | `OPENAI_API_KEY=user_provided` in `.env` |
 | A rebuild fails with "Directory '.' is not installable" | `COMPOSE_PROFILES=local-db-mcp` is set; clear it for a remote MCP server |
+| Database and document answers disagree | The document tools (`AKASHX_MCP_HOST`) read a different AkashX server than the MCP server; point both at the same one |
+| `"portalLoginEnabled":false` | `PORTAL_JWT_SECRET` is not set, or `ALLOW_SOCIAL_LOGIN` is not `true` |
+| Portal users land on the LibreChat login page | LibreChat is not on the portal's cookie domain, or the secret does not match the portal's |
+| One portal user cannot sign in | An email/password account with the same email exists; LibreChat blocks it to prevent account takeover. Remove that account |
 
 After any `.env` change: `docker compose up -d --force-recreate`.
