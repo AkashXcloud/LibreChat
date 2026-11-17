@@ -243,8 +243,10 @@ interface:
   agents:
     use: true
     create: true
-    share: false
-    public: false
+    # sharing is needed to give every user the AkashX Database Assistant agent; these values
+    # apply to admins too, so with share: false nobody can share an agent
+    share: true
+    public: true
   peoplePicker:
     users: true
     groups: true
@@ -303,7 +305,7 @@ mcpServers:
     url: https://mcp-server.tesla-stg.azure.akashx.ai/mcp
     # no per-request headers, so LibreChat keeps one shared connection (refresh and status indicators)
     # added to the context of agents that use these tools, whichever server the url points to
-    serverInstructions: |
+    serverInstructions: |
       AkashX database tools. Help people, including people who do not know SQL, get answers and insights from their data.
       - Find the data before querying: read_query("SHOW DATABASES"), then db_summary(db=...) for a database's tables, then table_overview(table="database.table") for columns, sample rows and row count. Never guess table or column names; skip system databases (information_schema, sys, _statistics_).
       - If SHOW DATABASES is refused, a semantic model is active: call db_summary with no arguments to see exactly which tables, Ontology Views and RagBuckets you may use.

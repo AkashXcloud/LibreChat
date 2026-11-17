@@ -20,6 +20,13 @@ the official LibreChat image does not contain them.
 The local `akashxdb-mcp` container in `docker-compose.override.yml` is only for development; it
 is neither built nor started unless `COMPOSE_PROFILES=local-db-mcp` is set.
 
+**Docker Compose only.** This guide deploys with Docker Compose. The Helm chart in `helm/librechat`
+deploys only the LibreChat app: it has no `akashx-documents`, `akashx-knowledge` or `fileagent`.
+For Kubernetes, those three need their own Deployments and Services, named `akashx-documents`,
+`akashx-knowledge` and `fileagent` (the host names `librechat.yaml` connects to), with the same
+environment variables as in `docker-compose.override.yml`. Without them the agent's document,
+product-docs and file tools are unavailable.
+
 ## 1. Network access needed from the LibreChat host
 
 | To | Port | Used by |
@@ -219,9 +226,8 @@ Agents are stored in MongoDB, not in git.
    - `mcp-akashxdb`: `read_query`, `db_summary`, `table_overview` (not `write_query`)
    - `mcp-akashx-documents`: `find_documents`, `search_documents`, `read_document`, `document_outline`
    - `mcp-akashx-knowledge`: `search_akashx_docs`, `describe_akashx_function`, `list_akashx_topics`
-5. Share the agent with all users. This needs agent sharing enabled in `librechat.yaml`
-   (`interface.agents.share: true`, and `public: true` to share with everyone); it is off in the
-   repo.
+5. Share the agent with all users (agent sharing is enabled in `librechat.yaml`:
+   `interface.agents.share` and `public` are `true`).
 6. Test in a new chat: "What data do we have in AkashX?" and "Which document collections are
    there?".
 
